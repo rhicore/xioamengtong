@@ -1,0 +1,37 @@
+# --- 系统与编辑器 ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.log
+
+# --- Python / Backend ---
+*/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.env
+.pytest_cache/
+
+# --- Node / Frontend ---
+node_modules/
+# 忽略前端项目的本地开发打包产物
+client_frontend/dist/
+# 忽略临时构建缓存
+.eslintcache
+.stylelintcache
+
+# --- 本地持久化数据 (核心：禁止上传用户数据和本地 DB) ---
+# 忽略 SQLite 数据库文件，初始化逻辑会自动生成
+data/*.db
+# 忽略所有用户上传的图片，防止泄露个人隐私或占用仓库空间
+data/images/**/*
+# 如果有特定的模板图片需要保留，可以取消注释下面一行：
+# !data/images/templates/
+
+# --- 配置文件 ---
+# 注意：notebook_templates.json 建议保留在 Git 中，
+# 除非你认为它是敏感信息或者需要根据环境完全隔离。
