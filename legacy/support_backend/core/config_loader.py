@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-# 定位到 根目录/config/notebook_templates.json
-CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "notebook_templates.json"
+# 定位到根目录/configs/notebook_templates.json
+CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "notebook_templates.json"
 
 _CONFIG_CACHE = {}
 

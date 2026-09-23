@@ -56,7 +56,9 @@ init_db()
 app = FastAPI()
 
 # 1. 挂载上传的图片静态目录
-app.mount("/static", StaticFiles(directory="data/images"), name="static")
+IMAGE_DIR = Path("data/images")
+IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(IMAGE_DIR)), name="static")
 
 # 2. CORS 配置 (开放局域网访问)
 app.add_middleware(

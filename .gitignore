@@ -20,6 +20,20 @@ ENV/
 node_modules/
 # 忽略前端项目的本地开发打包产物
 client_frontend/dist/
+admin_web/dist/
+admin_web/.env*
+!admin_web/.env.example
+customer_web/dist/
+customer_web/.env*
+!customer_web/.env.example
+backend_api/.env*
+!backend_api/.env.example
+cloudfunctions/**/node_modules/
+cloudfunctions/**/.env*
+packages/**/node_modules/
+# Vite 本地依赖预构建缓存
+.vite/
+**/.vite/
 # 忽略临时构建缓存
 .eslintcache
 .stylelintcache

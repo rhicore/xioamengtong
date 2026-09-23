@@ -1,0 +1,7 @@
+{
+  "envId": "xiaomengtong-d5g5zuan5ae97c4ea",
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "cloudrun": {
+    "name": "notebook-backend-api"
+  }
+}

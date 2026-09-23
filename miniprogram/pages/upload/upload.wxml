@@ -1,0 +1,94 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="state">正在加载订单...</view>
+  <view wx:elif="{{errorMsg && !orderData}}" class="state error-state">{{errorMsg}}</view>
+
+  <block wx:elif="{{orderData}}">
+    <view class="header">
+      <view class="back-button" bindtap="goBack">‹</view>
+      <view class="header-copy">
+        <view class="eyebrow">CUSTOM NOTEBOOK</view>
+        <view class="book-title">上传定制图片</view>
+        <view class="order-status">订单号：{{orderId}} · {{orderData.exists ? '可修改已有提交' : '首次提交'}}</view>
+      </view>
+    </view>
+
+    <view class="content">
+      <view class="notice-card">
+        <view class="notice-title">请先选择本子类型</view>
+        <view class="notice-text">A5/B5 图片比例相同，建议上传高清大图，原图分辨率不足会影响成品清晰度。</view>
+      </view>
+
+      <view class="type-list">
+        <view
+          wx:for="{{templates}}"
+          wx:key="slug"
+          class="type-card {{selectedType === item.slug ? 'is-selected' : ''}}"
+          data-slug="{{item.slug}}"
+          bindtap="selectType"
+        >
+          <view class="type-card-main">
+            <view class="type-name">{{item.display_name}}</view>
+            <view class="type-description">{{item.description}}</view>
+          </view>
+          <view class="type-check">{{selectedType === item.slug ? '✓' : ''}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{selectedTemplate}}" class="selected-summary">
+        当前选择：{{selectedTemplate.display_name}} · 竖版 {{selectedTemplate.aspect_ratio}}
+      </view>
+
+      <view wx:if="{{previewWarning}}" class="preview-warning">{{previewWarning}}</view>
+
+      <block wx:if="{{selectedTemplate}}">
+        <view class="image-status-card">
+          <view>前封面：{{images.front.path ? '已选择图片' : '空白'}}</view>
+          <view wx:if="{{selectedTemplate.image_count === 2}}">后封底：{{images.back.path ? '已选择图片' : '空白'}}</view>
+        </view>
+
+        <view class="upload-section">
+          <view class="section-title">
+            <text>{{selectedTemplate.image_count === 2 ? '前封面' : '封面图片'}}</text>
+            <text wx:if="{{images.front.path}}" class="ready-badge">已选择</text>
+          </view>
+          <view class="upload-card" data-side="front" bindtap="chooseImage">
+            <image wx:if="{{images.front.path}}" class="preview-image" src="{{images.front.path}}" mode="aspectFill" />
+            <view wx:else class="empty-upload">
+              <view class="upload-icon">＋</view>
+              <text>点击选择图片</text>
+              <text class="hint">建议上传高清原图</text>
+            </view>
+            <view wx:if="{{images.front.path}}" class="clear-button" data-side="front" catchtap="clearImage">清除</view>
+          </view>
+        </view>
+
+        <view wx:if="{{selectedTemplate.image_count === 2}}" class="upload-section">
+          <view class="section-title">
+            <text>后封底</text>
+            <text wx:if="{{images.back.path}}" class="ready-badge">已选择</text>
+          </view>
+          <view class="upload-card" data-side="back" bindtap="chooseImage">
+            <image wx:if="{{images.back.path}}" class="preview-image" src="{{images.back.path}}" mode="aspectFill" />
+            <view wx:else class="empty-upload">
+              <view class="upload-icon">＋</view>
+              <text>点击选择图片</text>
+              <text class="hint">不上传时按空白处理</text>
+            </view>
+            <view wx:if="{{images.back.path}}" class="clear-button" data-side="back" catchtap="clearImage">清除</view>
+          </view>
+        </view>
+
+        <view wx:if="{{selectedTemplate.allow_blank && !images.front.path && !images.back.path}}" class="blank-tip">当前没有选择任何图片。点击提交后不会新增云存储文件，订单会按空白图片处理。</view>
+        <view wx:else class="blank-tip">胶套本、车线本不上传图片时默认为空白；你之后可以再次输入同一个订单号修改。</view>
+      </block>
+
+      <view wx:if="{{errorMsg}}" class="error-message">{{errorMsg}}</view>
+    </view>
+
+    <view class="bottom-bar">
+      <button class="save-button {{submitting || !selectedTemplate || (!selectedTemplate.allow_blank && !images.front.path) ? 'is-disabled' : ''}}" bindtap="submit" loading="{{submitting}}" disabled="{{submitting || !selectedTemplate || (!selectedTemplate.allow_blank && !images.front.path)}}">
+        {{submitting ? '提交中...' : '确认并提交'}}
+      </button>
+    </view>
+  </block>
+</view>

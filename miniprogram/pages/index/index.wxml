@@ -1,0 +1,31 @@
+<view class="page">
+  <view class="hero-card">
+    <view class="eyebrow">CUSTOM NOTEBOOK</view>
+    <view class="title">图书定制采集系统</view>
+    <view class="subtitle">输入订单号，选择本子类型并上传定制图片</view>
+  </view>
+
+  <form bindsubmit="onSubmit">
+    <view class="form-card">
+      <view class="label">订单号</view>
+      <input
+        class="order-input"
+        value="{{orderId}}"
+        maxlength="64"
+        placeholder="请输入订单号"
+        placeholder-class="placeholder"
+        confirm-type="search"
+        bindinput="onOrderIdInput"
+        bindconfirm="onSubmit"
+      />
+      <button
+        class="submit-button {{loading || !orderId ? 'is-disabled' : ''}}"
+        form-type="submit"
+        loading="{{loading}}"
+        disabled="{{loading || !orderId}}"
+      >{{loading ? '准备中...' : '下一步'}}</button>
+
+      <view wx:if="{{errorMsg}}" class="error-message">{{errorMsg}}</view>
+    </view>
+  </form>
+</view>

@@ -1,0 +1,106 @@
+:root {
+  color: #1f2937;
+  background: #f3f4f6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 960px; }
+button, input, select { font: inherit; }
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  accent-color: #111827;
+  vertical-align: middle;
+}
+
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 32px; }
+.login-card, .filter-card, .table-card { background: #fff; border-radius: 20px; box-shadow: 0 16px 40px rgba(15, 23, 42, .06); }
+.login-card { width: 390px; padding: 40px; }
+.loading-card { text-align: center; }
+.app-shell { max-width: 1440px; margin: 0 auto; padding: 36px 44px 64px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+.account-actions { display: flex; align-items: center; gap: 14px; }
+.operator-name { color: #6b7280; font-size: 13px; }
+.view-tabs { display: flex; gap: 8px; margin: -8px 0 22px; }
+.view-tabs button { padding: 9px 14px; border: 0; border-radius: 9px; background: transparent; color: #6b7280; cursor: pointer; font-weight: 700; }
+.view-tabs button.active { background: #111827; color: #fff; }
+.eyebrow { margin: 0 0 10px; color: #9ca3af; font-size: 11px; font-weight: 800; letter-spacing: 3px; }
+h1 { margin: 0; color: #111827; font-size: 32px; }
+.muted, .status-text { color: #6b7280; }
+label { display: grid; gap: 8px; color: #374151; font-size: 13px; font-weight: 700; }
+input, select { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #d1d5db; border-radius: 10px; background: #fff; color: #111827; }
+.combobox-field { min-width: 0; }
+.combobox { position: relative; }
+.combobox-menu { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; max-height: 220px; overflow-y: auto; padding: 6px; border: 1px solid #d1d5db; border-radius: 12px; background: #fff; box-shadow: 0 12px 28px rgba(15, 23, 42, .14); }
+.combobox-option { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #111827; cursor: pointer; text-align: left; }
+.combobox-option:hover { background: #f3f4f6; }
+.combobox-option small { color: #9ca3af; font-size: 11px; font-weight: 500; }
+.combobox-empty { padding: 10px; color: #9ca3af; font-size: 12px; font-weight: 500; }
+.login-card label + label { margin-top: 18px; }
+.primary-button, .secondary-button, .text-button, .pagination button { border: 0; border-radius: 10px; cursor: pointer; }
+.primary-button { min-width: 92px; height: 42px; padding: 0 18px; background: #111827; color: white; font-weight: 700; }
+.primary-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .45; }
+.login-card .primary-button { width: 100%; margin-top: 26px; }
+.secondary-button { height: 42px; padding: 0 18px; border: 1px solid #d1d5db; background: #fff; color: #111827; font-weight: 700; }
+.text-button { padding: 8px 12px; background: transparent; color: #6b7280; }
+.filter-card { padding: 24px; margin-bottom: 24px; }
+.filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 16px; }
+.toolbar { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.table-card { overflow: hidden; }
+.accounts-layout { display: grid; grid-template-columns: minmax(280px, 0.7fr) minmax(0, 1.5fr); gap: 24px; align-items: start; position: relative; }
+.account-panel { padding: 24px; border-radius: 20px; background: #fff; box-shadow: 0 16px 40px rgba(15, 23, 42, .06); }
+.account-panel h2 { margin: 0 0 8px; color: #111827; font-size: 20px; }
+.account-panel .primary-button { margin-top: 20px; }
+.account-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+.account-create-form { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(150px, .7fr) auto; gap: 12px; align-items: end; margin: 22px 0; }
+.account-create-form .primary-button { margin-top: 0; }
+.account-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid #f3f4f6; color: #111827; font-size: 13px; }
+.account-list-heading span { color: #9ca3af; font-size: 12px; font-weight: 500; }
+.account-list { border-top: 1px solid #f3f4f6; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-bottom: 1px solid #f3f4f6; }
+.account-summary { display: flex; align-items: center; gap: 10px; min-width: 220px; color: #6b7280; font-size: 12px; }
+.account-summary strong { color: #111827; font-size: 13px; }
+.account-role, .account-disabled { padding: 3px 7px; border-radius: 999px; background: #eef2ff; color: #4338ca; }
+.account-disabled { background: #fee2e2; color: #b91c1c; }
+.account-actions-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.account-actions-row input { width: 140px; height: 36px; }
+.account-actions-row .secondary-button { height: 36px; padding: 0 12px; }
+.account-message { grid-column: 1 / -1; margin: -10px 0 0; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 16px; border-bottom: 1px solid #f3f4f6; text-align: left; font-size: 13px; line-height: 1.35; }
+th { padding-top: 9px; padding-bottom: 9px; background: #f9fafb; color: #6b7280; font-size: 11px; }
+.table-card tbody tr { height: 54px; }
+.table-card tbody tr:last-child td { border-bottom: 0; }
+.table-card input[aria-invalid="true"] { border-color: #dc2626; }
+.strong { color: #111827; font-weight: 700; }
+.time-cell { white-space: nowrap; color: #6b7280; font-size: 12px; }
+.time-cell div + div { margin-top: 3px; }
+.time-cell span { display: inline-block; width: 28px; color: #9ca3af; }
+.order-image-cell { display: flex; align-items: center; gap: 6px; min-height: 42px; }
+.image-thumb-button { width: 38px; height: 42px; padding: 0; overflow: hidden; border: 1px solid #d1d5db; border-radius: 6px; background: #f9fafb; cursor: pointer; }
+.image-thumb-button img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.image-thumb-button:hover { border-color: #111827; box-shadow: 0 0 0 2px rgba(17, 24, 39, .1); }
+.image-empty { color: #9ca3af; font-size: 12px; }
+.status-pill { display: inline-block; padding: 5px 9px; border-radius: 999px; background: #fef3c7; color: #b45309; font-size: 12px; font-weight: 700; }
+.status-pill.completed { background: #dcfce7; color: #15803d; }
+.status-pill.pending { background: #dbeafe; color: #1d4ed8; }
+.status-pill.draft { background: #f3f4f6; color: #6b7280; }
+.empty-cell { padding: 56px; color: #9ca3af; text-align: center; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding: 12px 16px; color: #6b7280; font-size: 13px; }
+.pagination button { padding: 7px 10px; background: #f3f4f6; color: #374151; }
+.pagination button:disabled { cursor: not-allowed; opacity: .45; }
+.error-text { margin-bottom: 0; color: #dc2626; font-size: 13px; }
+.image-modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; overflow: hidden; padding: 16px; background: rgba(15, 23, 42, .62); }
+.image-modal { width: fit-content; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: hidden; padding: 16px; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgba(15, 23, 42, .28); }
+.image-modal-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; color: #111827; }
+.image-modal > img { display: block; width: auto; height: auto; max-width: none; max-height: none; margin: 0 auto; object-fit: contain; border-radius: 0; background: transparent; }
+
+@media (max-width: 1100px) {
+  .app-shell { padding: 28px 24px 48px; }
+  .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .accounts-layout { grid-template-columns: 1fr; }
+  .account-create-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
