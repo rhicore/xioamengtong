@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 const VIEWPORT_WIDTH = 360;
 const VIEWPORT_HEIGHT = 480;
-const OUTPUT_WIDTH = 1200;
-const OUTPUT_HEIGHT = 1600;
+const OUTPUT_WIDTH = 1800;
+const OUTPUT_HEIGHT = 2400;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -316,6 +316,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
           <button className="editor-close" onClick={onCancel} disabled={applying} aria-label="关闭">×</button>
         </div>
         <p className="editor-tip">拖动图片调整位置，使用下方滑块缩放，框内区域就是最终上传内容。</p>
+        <p className="editor-warning">裁切会有 3–5mm 误差，重要文字图案请远离照片四周边缘。</p>
         <label className="editor-replace-button">
           更换图片
           <input type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceImage} disabled={applying} />

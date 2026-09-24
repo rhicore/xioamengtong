@@ -13,16 +13,22 @@ async function readResponse(response) {
   return payload.data !== undefined ? payload.data : payload;
 }
 
-export async function getOrder(orderId) {
-  const response = await fetch(`${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}`);
+export async function getOrder(orderId, options = {}) {
+  const { preview = true, ...fetchOptions } = options;
+  const query = preview === false ? '?preview=0' : '';
+  const response = await fetch(
+    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}${query}`,
+    fetchOptions
+  );
   return readResponse(response);
 }
 
-export async function uploadImages(orderId, files) {
+export async function uploadImages(orderId, files, options = {}) {
   const formData = new FormData();
   if (files.front) formData.append('front', files.front, files.front.name);
   if (files.back) formData.append('back', files.back, files.back.name);
-  const response = await fetch(`${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images`, {
+  const query = options.preview === false ? '?preview=0' : '';
+  const response = await fetch(`${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images${query}`, {
     method: 'POST',
     body: formData
   });
@@ -44,6 +50,13 @@ export async function getImageBlobUrl(orderId, side) {
     throw new Error(message);
   }
   return URL.createObjectURL(await response.blob());
+}
+
+export async function getImagePreviewUrls(orderId) {
+  const response = await fetch(
+    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images`
+  );
+  return readResponse(response);
 }
 
 export async function submitOrder(orderId, data) {

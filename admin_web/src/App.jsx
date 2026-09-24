@@ -4,6 +4,7 @@ import {
   batchDownload,
   createAccount,
   getCurrentUser,
+  getOrderPreviews,
   listOrders,
   listAccounts,
   signIn,
@@ -109,15 +110,32 @@ export default function App() {
         ...filters,
         page,
         pageSize: pagination.pageSize
-      });
-      setOrders(result.items || []);
+      }, { preview: false });
+      const nextOrders = result.items || [];
+      setOrders(nextOrders);
       setNotebookTypes(result.notebook_types || []);
       setPagination((current) => ({ ...current, page, total: result.total || 0 }));
       setSelectedIds([]);
+      void loadOrderPreviews(nextOrders);
     } catch (error) {
       setMessage(error.message || '订单加载失败');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadOrderPreviews(pageOrders) {
+    const orderIds = pageOrders.map((order) => order.order_id).filter(Boolean);
+    if (orderIds.length === 0) return;
+    try {
+      const previews = await getOrderPreviews(orderIds);
+      setOrders((current) => current.map((order) => (
+        previews[order.order_id]
+          ? { ...order, ...previews[order.order_id] }
+          : order
+      )));
+    } catch {
+      // 缩略图加载失败不影响订单列表操作。
     }
   }
 
@@ -224,9 +242,11 @@ export default function App() {
     setAccountLoading(true);
     setAccountMessage('');
     try {
-      await createAccount(accountForm);
+      const created = await createAccount(accountForm);
       setAccountForm({ username: '', password: '', role: 'operator' });
-      setAccounts(await listAccounts());
+      setAccounts((current) => [...current, created].sort((left, right) => (
+        String(left.username || '').localeCompare(String(right.username || ''))
+      )));
       setAccountMessage('账号已创建');
     } catch (error) {
       setAccountMessage(error.message || '账号创建失败');
@@ -254,8 +274,10 @@ export default function App() {
     setAccountLoading(true);
     setAccountMessage('');
     try {
-      await updateAccount(account.id, { disabled: !account.disabled });
-      setAccounts(await listAccounts());
+      const updated = await updateAccount(account.id, { disabled: !account.disabled });
+      setAccounts((current) => current.map((item) => (
+        item.id === account.id ? { ...item, ...updated } : item
+      )));
       setAccountMessage(account.disabled ? '账号已启用' : '账号已禁用');
     } catch (error) {
       setAccountMessage(error.message || '账号状态修改失败');
@@ -592,7 +614,9 @@ export default function App() {
                         <img src={order.back_url} alt="后图" />
                       </button>
                     )}
-                    {!order.front_url && !order.back_url && <span className="image-empty">无图片</span>}
+                    {!order.front_url && !order.back_url && (order.front_file_id || order.back_file_id)
+                      ? <span className="image-empty">读取中…</span>
+                      : (!order.front_url && !order.back_url && <span className="image-empty">无图片</span>)}
                   </div>
                 </td>
                 <td className="time-cell">
@@ -601,7 +625,7 @@ export default function App() {
                 </td>
               </tr>
             ))}
-            {orders.length === 0 && <tr><td colSpan="6" className="empty-cell">暂无订单</td></tr>}
+            {orders.length === 0 && <tr><td colSpan="7" className="empty-cell">暂无订单</td></tr>}
           </tbody>
         </table>
         <div className="pagination">

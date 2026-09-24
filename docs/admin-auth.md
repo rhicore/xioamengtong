@@ -6,20 +6,19 @@
 
 Admin Web 使用项目自己的员工账号体系，不再要求员工拥有或输入 CloudBase Auth 用户名密码。
 
-员工只需要使用 `staff_accounts` 中维护的账号和密码登录后台。CloudBase 只作为后台服务使用的数据库、云存储和云函数运行环境；CloudBase Auth 不再参与员工的登录流程。
+员工只需要使用 `staff_accounts` 中维护的账号和密码登录后台。CloudBase 只作为后台服务使用的数据库、云存储和云托管环境；CloudBase Auth 不再参与员工的登录流程。
 
-本方案只调整 Admin Web 的认证链路，不改变顾客小程序当前的微信云开发链路。
+顾客网页和 Admin Web 共用 `backend_api`，不直接使用 CloudBase Web Auth，也不直接访问数据库。
 
 ## 2. 当前问题
 
-当前 Admin Web 直接使用 CloudBase Web SDK：
+历史版本的 Admin Web 曾直接使用 CloudBase Web SDK：
 
 ```text
 Admin Web
   -> CloudBase Auth signInWithPassword
   -> 获取 CloudBase 用户 UID
   -> 调用后台 HTTP 订单和下载接口
-  -> 云函数根据 UID 查询 staff_accounts
 ```
 
 当前的 `staff_accounts` 只保存 CloudBase UID 和禁用状态，并不保存员工登录密码。因此它是权限白名单，不是真正的账号表。
@@ -186,7 +185,7 @@ CloudBase 数据库/云存储
   -> 只允许后台服务端或云函数访问
 ```
 
-数据库权限建议继续设置为客户端不可直接读写。后台使用 `@cloudbase/node-sdk` 或云函数服务端 SDK 访问 CloudBase，不把服务端密钥发给浏览器。
+数据库权限建议设置为客户端不可直接读写。后台使用 `@cloudbase/node-sdk` 访问 CloudBase，不把服务端密钥发给浏览器。
 
 ## 8. 订单接口迁移
 
@@ -212,7 +211,7 @@ POST /api/v1/admin/batch-download
 
 账号管理接口也已实现：管理员可以列出、创建、禁用/启用账号并修改其他账号密码；普通用户只能修改自己的密码。
 
-原来的 `adminListOrders` 和 `adminBatchDownload` 云函数已经删除。订单筛选和批量下载逻辑已迁移到 `backend_api`，由同一个通用 HTTP 服务完成会话校验、权限控制和 CloudBase 服务端访问。小程序兼容的 `getOrder`、`saveOrderImages` 仍然保留，直到小程序端完全迁移到顾客网页。
+原来的 `adminListOrders` 和 `adminBatchDownload` 云函数已经删除。订单筛选、图片预览和批量下载逻辑全部由 `backend_api` 完成。
 
 ## 9. 安全要求
 
@@ -227,18 +226,17 @@ POST /api/v1/admin/batch-download
 - 后台接口必须在服务端检查账号是否被禁用，不能只依赖前端状态。
 - 记录登录成功、登录失败、登出和批量下载等审计事件，但不要记录密码或完整 session token。
 
-## 10. 与小程序的关系
+## 10. 与顾客网页的关系
 
-小程序继续使用现有链路，不需要改成员工账号体系：
+顾客网页使用同一个 `backend_api`，但不需要员工登录：
 
 ```text
-小程序
-  -> wx.cloud.callFunction(getOrder)
-  -> wx.cloud.uploadFile
-  -> wx.cloud.callFunction(saveOrderImages)
+顾客网页
+  -> GET/POST /api/v1/customer/*
+  -> backend_api 服务端访问 CloudBase
 ```
 
-小程序用户和 Admin Web 后台账号是两套完全不同的身份。员工认证改造不影响顾客订单查询、图片上传和订单提交。
+顾客接口不具备订单列表、批量下载或账号管理权限；员工会话只用于后台路由。
 
 ## 11. 实施顺序
 
@@ -251,7 +249,7 @@ POST /api/v1/admin/batch-download
 5. 将 `VITE_BACKEND_MODE` 切换为 `http`，配置 `VITE_HTTP_API_BASE_URL`。
 6. 验证登录、禁用账号、会话过期、订单查询、批量下载和角色权限。
 7. 移除 Admin Web 对 `@cloudbase/js-sdk` 的依赖和 CloudBase Auth 代码。
-8. 确认旧的 `staff_accounts.uid` 校验不再是管理端访问条件；旧云函数仅保留兼容部署。
+8. 确认旧的 `staff_accounts.uid` 校验不再是管理端访问条件，并清理已迁移的旧前端和兼容入口。
 9. 云托管开通后部署 `backend_api`，再将带真实 API 地址的 `admin_web/dist` 和 `customer_web/dist` 发布到 Hosting。
 
 ## 12. 验收标准
@@ -265,4 +263,4 @@ POST /api/v1/admin/batch-download
 - Admin Web 浏览器中不出现 CloudBase Auth 登录请求。
 - Admin Web 浏览器中不出现 CloudBase 服务密钥。
 - 浏览器不能直接读取 `staff_accounts`、`orders` 或云存储管理数据。
-- 小程序原有订单查询和图片提交功能保持正常。
+- 顾客网页订单查询、图片提交和已有图片修改功能保持正常。

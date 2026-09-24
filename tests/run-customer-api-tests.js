@@ -92,6 +92,15 @@ async function run() {
   assert.equal(result.body.data.exists, true);
   assert.match(result.body.data.front_url, /^https:\/\/mock\.local/);
 
+  result = await request(baseUrl, '/api/v1/customer/orders/WEB-001?preview=0');
+  assert.equal(result.response.status, 200);
+  assert.notEqual(result.body.data.front_file_id, '');
+  assert.equal(result.body.data.front_url, '');
+
+  result = await request(baseUrl, '/api/v1/customer/orders/WEB-001/images');
+  assert.equal(result.response.status, 200);
+  assert.match(result.body.data.front_url, /^https:\/\/mock\.local/);
+
   const imageResponse = await fetch(baseUrl + '/api/v1/customer/orders/WEB-001/images/front');
   assert.equal(imageResponse.status, 200);
   assert.equal(imageResponse.headers.get('content-type'), 'image/jpeg');

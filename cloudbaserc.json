@@ -1,6 +1,5 @@
 {
   "envId": "xiaomengtong-d5g5zuan5ae97c4ea",
-  "functionRoot": "cloudfunctions",
   "hosting": {
     "public": "admin_web/dist",
     "ignore": [

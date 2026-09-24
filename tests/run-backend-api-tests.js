@@ -174,7 +174,14 @@ async function run() {
   const address = server.address();
   const baseUrl = 'http://127.0.0.1:' + address.port;
 
-  let result = await request(baseUrl, '/api/v1/admin/me');
+  let result = await request(baseUrl, '/healthz', {
+    headers: { Origin: 'http://localhost:5176' }
+  });
+  assert.strictEqual(result.response.status, 200);
+  assert.strictEqual(result.response.headers.get('access-control-allow-origin'), 'http://localhost:5176');
+  assert.strictEqual(result.response.headers.get('access-control-allow-credentials'), 'true');
+
+  result = await request(baseUrl, '/api/v1/admin/me');
   assert.strictEqual(result.response.status, 401);
 
   result = await request(baseUrl, '/api/v1/admin/login', {
@@ -220,6 +227,17 @@ async function run() {
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.body.data.total, 2);
   assert.match(result.body.data.items[0].front_url, /^https:\/\/mock\.local/);
+
+  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=%E8%BD%A6%E7%BA%BF&preview=0', {}, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.strictEqual(result.body.data.items[0].front_url, '');
+
+  result = await request(baseUrl, '/api/v1/admin/order-previews', {
+    method: 'POST',
+    body: JSON.stringify({ orderIds: ['1'] })
+  }, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.match(result.body.data['1'].front_url, /^https:\/\/mock\.local/);
 
   result = await request(baseUrl, '/api/v1/admin/batch-download', {
     method: 'POST',

@@ -1,7 +1,3 @@
-const mode = import.meta.env.VITE_BACKEND_MODE || 'http';
-
-export const backendMode = mode;
-
 export const backend = import('./http.js');
 
 export async function signIn(username, password) {
@@ -19,9 +15,14 @@ export async function getCurrentUser() {
   return adapter.getCurrentUser();
 }
 
-export async function listOrders(filters = {}) {
+export async function listOrders(filters = {}, options = {}) {
   const adapter = await backend;
-  return adapter.listOrders(filters);
+  return adapter.listOrders(filters, options);
+}
+
+export async function getOrderPreviews(orderIds = []) {
+  const adapter = await backend;
+  return adapter.getOrderPreviews(orderIds);
 }
 
 export async function batchDownload(orderIds = []) {

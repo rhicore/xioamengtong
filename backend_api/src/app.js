@@ -9,9 +9,10 @@ const {
   publicAccount,
   validatePassword
 } = require('./auth');
-const { createBatchDownload, listOrders } = require('./orders');
+const { createBatchDownload, getOrderImagePreviews, listOrders } = require('./orders');
 const {
   getCustomerImage,
+  getCustomerImageUrls,
   getCustomerOrder,
   saveCustomerOrder,
   uploadCustomerImages
@@ -57,7 +58,8 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
     'https://xiaomengtong-d5g5zuan5ae97c4ea-1493143164.tcloudbaseapp.com',
     'http://localhost:5173',
     'http://localhost:5174',
-    'http://localhost:5175'
+    'http://localhost:5175',
+    'http://localhost:5176'
   ].join(','))
     .split(',')
     .map((origin) => origin.trim())
@@ -99,7 +101,8 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
 
   async function customerOrderDetails(req, res, next) {
     try {
-      return res.json(success(await getCustomerOrder(store, req.params.orderId)));
+      const includePreview = req.query.preview !== '0' && req.query.preview !== 'false';
+      return res.json(success(await getCustomerOrder(store, req.params.orderId, { includePreview })));
     } catch (error) {
       return next(error);
     }
@@ -107,7 +110,13 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
 
   async function customerImageUploadHandler(req, res, next) {
     try {
-      return res.json(success(await uploadCustomerImages(store, req.params.orderId, req.files)));
+      const includePreview = req.query.preview !== '0' && req.query.preview !== 'false';
+      return res.json(success(await uploadCustomerImages(
+        store,
+        req.params.orderId,
+        req.files,
+        { includePreview }
+      )));
     } catch (error) {
       return next(error);
     }
@@ -119,6 +128,14 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
       res.setHeader('Content-Type', result.contentType);
       res.setHeader('Cache-Control', 'private, max-age=300');
       return res.send(result.fileContent);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function customerImageUrlsHandler(req, res, next) {
+    try {
+      return res.json(success(await getCustomerImageUrls(store, req.params.orderId)));
     } catch (error) {
       return next(error);
     }
@@ -144,6 +161,10 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
     { name: 'front', maxCount: 1 },
     { name: 'back', maxCount: 1 }
   ]), customerImageUploadHandler);
+  app.get([
+    '/api/v1/customer/orders/:orderId/images',
+    '/api/v1/orders/:orderId/images'
+  ], customerImageUrlsHandler);
   app.get([
     '/api/v1/customer/orders/:orderId/images/:side',
     '/api/v1/orders/:orderId/images/:side'
@@ -196,6 +217,18 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
     try {
       await requireAuth(req);
       return res.json(success(await listOrders(store, req.query)));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post('/api/v1/admin/order-previews', async (req, res, next) => {
+    try {
+      await requireAuth(req);
+      return res.json(success(await getOrderImagePreviews(
+        store,
+        req.body && req.body.orderIds
+      )));
     } catch (error) {
       return next(error);
     }
@@ -274,8 +307,8 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
           throw new HttpError(400, '不能禁用唯一的管理员账号');
         }
       }
-      const account = await store.updateAccount(targetId, patch);
-      return res.json(success(publicAccount(account)));
+      await store.updateAccount(targetId, patch);
+      return res.json(success(publicAccount({ ...target, ...patch })));
     } catch (error) {
       return next(error);
     }

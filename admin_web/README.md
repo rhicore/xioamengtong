@@ -1,6 +1,6 @@
 # 运维后台网页
 
-这个目录只负责打印/客服人员使用的网页，不会被打包进小程序。
+这个目录只负责打印/客服人员使用的网页，独立构建和发布。
 
 当前网页只调用 backend_api HTTP API。员工账号和密码由项目自己的 staff_accounts 账号体系维护，网页不使用 CloudBase Web Auth，不保存 CloudBase API Key，也不直连数据库。
 
@@ -44,7 +44,7 @@ cd ..
 tcb hosting deploy admin_web/dist -e 你的环境ID
 ```
 
-网页文件部署在 CloudBase 静态托管（Hosting），不是部署在小程序包内，也不是部署在 `cloudfunctions` 目录里。正式域名、HTTPS、访问配置和认证方式在 CloudBase 控制台管理。
+网页文件部署在 CloudBase 静态托管（Hosting）。正式域名、HTTPS、访问配置和认证方式在 CloudBase 控制台管理。
 
 部署前可在项目根目录执行：
 
@@ -54,4 +54,4 @@ node tests/run-admin-web-tests.js
 
 这个测试只做本地协议断言和生产构建，不会修改 CloudBase 数据。
 
-生产环境的 .env.local 需要配置 VITE_BACKEND_MODE=http 和 VITE_HTTP_API_BASE_URL=https://你的通用后端地址。
+生产环境的 `.env.local` 需要配置 `VITE_HTTP_API_BASE_URL=https://你的通用后端地址`。

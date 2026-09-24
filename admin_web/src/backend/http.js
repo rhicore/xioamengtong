@@ -53,10 +53,19 @@ export async function getCurrentUser() {
   }
 }
 
-export async function listOrders(filters = {}) {
-  const query = new URLSearchParams(filters).toString();
+export async function listOrders(filters = {}, options = {}) {
+  const params = { ...filters };
+  if (options.preview === false) params.preview = '0';
+  const query = new URLSearchParams(params).toString();
   const response = await request(`/api/v1/admin/orders?${query}`);
   return readData(response);
+}
+
+export async function getOrderPreviews(orderIds = []) {
+  return readData(await request('/api/v1/admin/order-previews', {
+    method: 'POST',
+    body: JSON.stringify({ orderIds })
+  }));
 }
 
 export async function batchDownload(orderIds = []) {

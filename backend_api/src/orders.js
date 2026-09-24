@@ -77,7 +77,8 @@ async function listOrders(store, event = {}) {
 
   const result = await store.listOrders(filters, page, pageSize);
   let imageUrls = {};
-  if (typeof store.getTempFileURLMap === 'function') {
+  const includeImageUrls = event.preview !== '0' && event.preview !== 'false';
+  if (includeImageUrls && typeof store.getTempFileURLMap === 'function') {
     try {
       const fileIds = result.items.flatMap((order) => [order.front_file_id, order.back_file_id]);
       imageUrls = await store.getTempFileURLMap(fileIds);
@@ -107,6 +108,28 @@ async function listOrders(store, event = {}) {
     page,
     page_size: pageSize
   };
+}
+
+async function getOrderImagePreviews(store, orderIds = []) {
+  const normalizedIds = [...new Set((Array.isArray(orderIds) ? orderIds : [])
+    .map((id) => String(id).trim()).filter(Boolean))].slice(0, 100);
+  if (normalizedIds.length === 0) return {};
+
+  const orders = await store.getOrdersByIds(normalizedIds);
+  let imageUrls = {};
+  if (typeof store.getTempFileURLMap === 'function') {
+    try {
+      const fileIds = orders.flatMap((order) => [order.front_file_id, order.back_file_id]);
+      imageUrls = await store.getTempFileURLMap(fileIds);
+    } catch (error) {
+      console.warn('admin image preview urls unavailable', error.message || error);
+    }
+  }
+
+  return Object.fromEntries(orders.map((order) => [order.order_id, {
+    front_url: imageUrls[order.front_file_id] || '',
+    back_url: imageUrls[order.back_file_id] || ''
+  }]));
 }
 
 function serializeDate(value) {
@@ -145,7 +168,7 @@ function createZip(entries) {
     output.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     output.on('end', () => resolve(Buffer.concat(chunks)));
     output.on('error', reject);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = archiver('zip', { zlib: { level: 0 } });
     archive.on('error', reject);
     archive.pipe(output);
     entries.forEach((entry) => archive.append(entry.content, { name: entry.name }));
@@ -163,16 +186,15 @@ async function createBatchDownload(store, orderIds) {
   const orders = await store.getOrdersByIds(normalizedIds);
   if (orders.length === 0) throw failure('没有找到所选订单');
 
-  const entries = [];
-  for (const order of orders) {
+  const orderEntries = await mapWithConcurrency(orders, 8, async (order) => {
     const folderName = buildOrderFolderName(order);
-    entries.push({
+    const entries = [{
       name: folderName + '/订单信息.json',
       content: Buffer.from(JSON.stringify(buildOrderInfo(order, templateMap[order.notebook_type]), null, 2) + '\n', 'utf8')
-    });
-    for (const side of ['front', 'back']) {
+    }];
+    const imageEntries = await Promise.all(['front', 'back'].map(async (side) => {
       const fileID = order[side + '_file_id'];
-      if (!fileID) continue;
+      if (!fileID) return null;
       const content = await store.downloadFile(fileID);
       const fileName = buildDownloadFileName(
         order,
@@ -180,9 +202,11 @@ async function createBatchDownload(store, orderIds) {
         side,
         '.jpg'
       );
-      entries.push({ name: folderName + '/' + fileName, content });
-    }
-  }
+      return { name: folderName + '/' + fileName, content };
+    }));
+    return entries.concat(imageEntries.filter(Boolean));
+  });
+  const entries = orderEntries.flat();
 
   return {
     filename: 'orders-' + Date.now() + '.zip',
@@ -190,4 +214,18 @@ async function createBatchDownload(store, orderIds) {
   };
 }
 
-module.exports = { listOrders, createBatchDownload };
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+module.exports = { listOrders, getOrderImagePreviews, createBatchDownload };

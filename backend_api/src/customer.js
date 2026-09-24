@@ -93,11 +93,14 @@ function toPublicOrder(order, template, extra = {}) {
   };
 }
 
-async function getCustomerOrder(store, value) {
+async function getCustomerOrder(store, value, options = {}) {
   const orderId = normalizeCustomerOrderId(value);
   const platformDetection = detectPlatform(orderId);
-  const templates = templateOptions(await store.getTemplateMap());
-  const order = await store.getOrderByOrderId(orderId);
+  const [templateMap, order] = await Promise.all([
+    store.getTemplateMap({ allowStale: true }),
+    store.getOrderByOrderId(orderId)
+  ]);
+  const templates = templateOptions(templateMap);
 
   if (!order) {
     return {
@@ -118,11 +121,13 @@ async function getCustomerOrder(store, value) {
 
   const template = findTemplate(templates, order.notebook_type) || templates[0] || getDefaultTemplates()[0];
   let urlMap = {};
-  try {
-    urlMap = await store.getTempFileURLMap([order.front_file_id, order.back_file_id]);
-  } catch (error) {
-    // 订单信息仍然可以展示，图片 URL 失败时由前端提示用户重新上传。
-    console.warn('customer image preview url unavailable', error.message || error);
+  if (options.includePreview !== false) {
+    try {
+      urlMap = await store.getTempFileURLMap([order.front_file_id, order.back_file_id]);
+    } catch (error) {
+      // 订单信息仍然可以展示，图片 URL 失败时由前端提示用户重新上传。
+      console.warn('customer image preview url unavailable', error.message || error);
+    }
   }
 
   return toPublicOrder(order, template, {
@@ -148,6 +153,24 @@ async function getCustomerImage(store, value, side) {
   }
 }
 
+async function getCustomerImageUrls(store, value) {
+  const orderId = normalizeCustomerOrderId(value);
+  const order = await store.getOrderByOrderId(orderId);
+  if (!order) return { order_id: orderId, front_url: '', back_url: '' };
+
+  let urlMap = {};
+  try {
+    urlMap = await store.getTempFileURLMap([order.front_file_id, order.back_file_id]);
+  } catch (error) {
+    console.warn('customer image preview urls unavailable', error.message || error);
+  }
+  return {
+    order_id: orderId,
+    front_url: urlMap[order.front_file_id] || '',
+    back_url: urlMap[order.back_file_id] || ''
+  };
+}
+
 function validateImage(file) {
   if (!file || !file.buffer || file.size <= 0) {
     throw customerError(400, '上传图片不能为空');
@@ -164,29 +187,34 @@ function extensionFor(file) {
   return '.jpg';
 }
 
-async function uploadCustomerImages(store, value, files = {}) {
+async function uploadCustomerImages(store, value, files = {}, options = {}) {
   const orderId = normalizeCustomerOrderId(value);
   const uploaded = {};
   const orderPath = safeOrderPathPart(orderId);
 
-  for (const side of ['front', 'back']) {
+  const uploadResults = await Promise.all(['front', 'back'].map(async (side) => {
     const file = Array.isArray(files[side]) ? files[side][0] : null;
-    if (!file) continue;
+    if (!file) return null;
     validateImage(file);
     const cloudPath = `orders/${orderPath}/${Date.now()}-${side}${extensionFor(file)}`;
     const result = await store.uploadFile(cloudPath, file.buffer);
-    uploaded[side + '_file_id'] = result.fileID;
-  }
+    return { side, fileId: result.fileID };
+  }));
+  uploadResults.filter(Boolean).forEach(({ side, fileId }) => {
+    uploaded[side + '_file_id'] = fileId;
+  });
 
   if (Object.keys(uploaded).length === 0) {
     throw customerError(400, '请至少上传一张图片');
   }
 
   let urls = {};
-  try {
-    urls = await store.getTempFileURLMap(Object.values(uploaded));
-  } catch (error) {
-    console.warn('customer uploaded image preview url unavailable', error.message || error);
+  if (options.includePreview !== false) {
+    try {
+      urls = await store.getTempFileURLMap(Object.values(uploaded));
+    } catch (error) {
+      console.warn('customer uploaded image preview url unavailable', error.message || error);
+    }
   }
 
   return {
@@ -199,7 +227,11 @@ async function uploadCustomerImages(store, value, files = {}) {
 
 async function saveCustomerOrder(store, value, body = {}) {
   const orderId = normalizeCustomerOrderId(value);
-  const templates = templateOptions(await store.getTemplateMap());
+  const [templateMap, existing] = await Promise.all([
+    store.getTemplateMap({ allowStale: true }),
+    store.getOrderByOrderId(orderId)
+  ]);
+  const templates = templateOptions(templateMap);
   const template = findTemplate(templates, String(body.notebook_type || body.notebookType || '').trim());
   if (!template) throw customerError(400, '请选择有效的本子类型');
 
@@ -218,14 +250,13 @@ async function saveCustomerOrder(store, value, body = {}) {
     throw customerError(400, '当前本子类型不需要后封底图片');
   }
 
-  const existing = await store.getOrderByOrderId(orderId);
   const now = new Date();
   const updateData = {
     notebook_type: template.slug,
     status: 'submitted',
     updated_at: now,
     submitted_at: now,
-    source: body.source === 'miniprogram' ? 'miniprogram' : 'web'
+    source: 'web'
   };
   const detectedPlatform = detectPlatform(orderId);
   if (!existing || !existing.platform) updateData.platform = detectedPlatform.platform;
@@ -254,7 +285,7 @@ async function saveCustomerOrder(store, value, body = {}) {
       created_at: now,
       updated_at: now,
       submitted_at: now,
-      source: body.source === 'miniprogram' ? 'miniprogram' : 'web'
+      source: 'web'
     });
 
   return toPublicOrder(order || { order_id: orderId, ...updateData }, template);
@@ -262,6 +293,7 @@ async function saveCustomerOrder(store, value, body = {}) {
 
 module.exports = {
   getCustomerImage,
+  getCustomerImageUrls,
   getCustomerOrder,
   uploadCustomerImages,
   saveCustomerOrder

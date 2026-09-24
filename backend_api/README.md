@@ -12,7 +12,7 @@
 ## 本地运行
 
 ```powershell
-pnpm install
+npm install
 Copy-Item .env.example .env
 $env:CLOUDBASE_ENV_ID='xiaomengtong-d5g5zuan5ae97c4ea'
 $env:PORT='8787'
@@ -22,7 +22,7 @@ node server.js
 本地运行或云托管运行时，后台优先读取服务端 `CLOUDBASE_APIKEY`，也兼容腾讯云
 `TENCENTCLOUD_SECRETID` 和 `TENCENTCLOUD_SECRETKEY`。这些值只给 Node 服务端使用，不能提交到
 仓库，也不能放进 `admin_web`。这里的 `CLOUDBASE_APIKEY` 必须是 CloudBase 控制台创建的服务端
-API Key，不是小程序端的 Publishable Key。
+API Key，不是前端使用的 Publishable Key。
 
 如果容器日志提示 `missing secretId or secretKey`，说明当前容器没有读取到任何服务端凭证。
 请在云托管服务版本的环境变量中配置 `CLOUDBASE_APIKEY`。浏览器永远不应该拿到这个变量。
@@ -34,13 +34,21 @@ API Key，不是小程序端的 Publishable Key。
 首次部署前，需要在 CloudBase 控制台为当前环境开通“云托管”资源；如果 CLI 返回“云托管资源未开通”，不是代码或授权错误。
 
 ```powershell
-tcb cloudrun deploy --env-id xiaomengtong-d5g5zuan5ae97c4ea --service-name notebook-backend-api --source backend_api --port 8787 --open-access-types PUBLIC --wait
+tcb cloudrun deploy --env-id xiaomengtong-d5g5zuan5ae97c4ea --service-name notebook-backend-api --source backend_api --port 8787 --open-access-types PUBLIC --min-num 1 --wait
 ```
+
+`--min-num 1` 用于保留一个热实例，避免低频访问时服务缩容到 0 后产生冷启动延迟；如果更看重最低成本，可以改成 `--min-num 0`，但用户第一次打开时可能需要等待容器唤醒。
+
+### 顾客端性能链路
+
+顾客查询接口支持 `?preview=0` 快速模式。顾客网页先拿订单、类型和文件 ID，页面立即显示；已有图片通过图片接口在后台并行读取，不再阻塞订单页面。图片上传也会并行上传前后图片，并使用快速模式跳过无用的临时预览地址生成。
+
+管理端订单列表也使用 `preview=0` 快速返回，列表先显示，缩略图通过受保护的 `/api/v1/admin/order-previews` 接口后台批量补齐。批量下载使用有限并发读取图片，避免逐张串行等待；ZIP 对已经压缩的图片使用低压缩级别，优先保证生成速度。
 
 部署后需要在云托管服务环境变量中设置以下非敏感变量：
 
 - CLOUDBASE_ENV_ID=xiaomengtong-d5g5zuan5ae97c4ea
-- ADMIN_CORS_ORIGINS=https://你的静态托管域名,http://localhost:5175
+- ADMIN_CORS_ORIGINS=https://你的静态托管域名,http://localhost:5175,http://localhost:5176
 - ADMIN_COOKIE_SAMESITE=None
 
 当前 CLI 的 `tcb cloudrun deploy` 没有直接的环境变量参数。可以通过 CLI 的通用 CloudRun API
@@ -48,7 +56,7 @@ tcb cloudrun deploy --env-id xiaomengtong-d5g5zuan5ae97c4ea --service-name noteb
 `cmd.exe` 保留 JSON 双引号）：
 
 ```powershell
-cmd.exe /d /s /c 'pnpm.cmd dlx --package=@cloudbase/cli tcb api tcbr SubmitServerConfigChangeDiff --api-version 2022-02-17 --body "{\"EnvId\":\"你的环境ID\",\"ServerName\":\"notebook-backend-api\",\"Items\":[{\"Key\":\"EnvParam\",\"Value\":\"{\\\"CLOUDBASE_ENV_ID\\\":\\\"你的环境ID\\\",\\\"ADMIN_CORS_ORIGINS\\\":\\\"你的静态托管域名,http://localhost:5175\\\",\\\"ADMIN_COOKIE_SAMESITE\\\":\\\"None\\\"}\"}]}" --json'
+cmd.exe /d /s /c 'pnpm.cmd dlx --package=@cloudbase/cli tcb api tcbr SubmitServerConfigChangeDiff --api-version 2022-02-17 --body "{\"EnvId\":\"你的环境ID\",\"ServerName\":\"notebook-backend-api\",\"Items\":[{\"Key\":\"EnvParam\",\"Value\":\"{\\\"CLOUDBASE_ENV_ID\\\":\\\"你的环境ID\\\",\\\"ADMIN_CORS_ORIGINS\\\":\\\"你的静态托管域名,http://localhost:5175,http://localhost:5176\\\",\\\"ADMIN_COOKIE_SAMESITE\\\":\\\"None\\\"}\"}]}" --json'
 ```
 
 返回 `TaskId` 后，可用下面的命令查询配置任务；状态为 `finished` 后再访问服务：
@@ -58,6 +66,6 @@ cmd.exe /d /s /c 'pnpm.cmd dlx --package=@cloudbase/cli tcb api tcbr DescribeSer
 ```
 
 这次实际部署中，以上配置和服务端 API Key 已经在云托管版本中配置并核验成功。服务端 API Key
-只存在于云托管容器环境变量中，不会进入仓库、网页或小程序。
+只存在于云托管容器环境变量中，不会进入仓库或网页。
 
 云托管服务本身通过服务端身份访问 CloudBase，浏览器只持有 HttpOnly 会话 Cookie。

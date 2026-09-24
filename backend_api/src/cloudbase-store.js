@@ -9,6 +9,10 @@ function createCloudbaseStore(options = {}) {
     ...(process.env.TENCENTCLOUD_SECRETKEY && { secretKey: process.env.TENCENTCLOUD_SECRETKEY })
   });
   const db = cloudbaseApp.database();
+  const TEMPLATE_CACHE_TTL_MS = 5 * 60 * 1000;
+  let templateCache = null;
+  let templateCacheExpiresAt = 0;
+  let templateRefreshPromise = null;
 
   async function getAccountByUsername(username) {
     const result = await db.collection('staff_accounts')
@@ -40,12 +44,12 @@ function createCloudbaseStore(options = {}) {
 
   async function createAccount(data) {
     const result = await db.collection('staff_accounts').add(data);
-    return getAccountById(result.id || result._id);
+    return { ...data, _id: result.id || result._id };
   }
 
   async function updateAccount(id, data) {
     await db.collection('staff_accounts').doc(id).update(data);
-    return getAccountById(id);
+    return { ...data, _id: id };
   }
 
   async function createSession(data) {
@@ -71,7 +75,7 @@ function createCloudbaseStore(options = {}) {
     }
   }
 
-  async function getTemplateMap() {
+  async function refreshTemplateMap() {
     const { getDefaultTemplates } = require('../order-core');
     const templateMap = getDefaultTemplates().reduce((map, template) => {
       map[template.slug] = template;
@@ -85,18 +89,51 @@ function createCloudbaseStore(options = {}) {
     } catch (error) {
       console.warn('notebook_templates unavailable, using built-in templates');
     }
-    return templateMap;
+    templateCache = templateMap;
+    templateCacheExpiresAt = Date.now() + TEMPLATE_CACHE_TTL_MS;
+    return templateCache;
+  }
+
+  async function getTemplateMap(options = {}) {
+    if (options.allowStale) {
+      if (!templateCache) {
+        const { getDefaultTemplates } = require('../order-core');
+        templateCache = getDefaultTemplates().reduce((map, template) => {
+          map[template.slug] = template;
+          return map;
+        }, {});
+      }
+      if (!templateRefreshPromise && Date.now() >= templateCacheExpiresAt) {
+        templateRefreshPromise = refreshTemplateMap().finally(() => {
+          templateRefreshPromise = null;
+        });
+      }
+      return templateCache;
+    }
+    if (templateCache) return templateCache;
+    if (!templateRefreshPromise) {
+      templateRefreshPromise = refreshTemplateMap().finally(() => {
+        templateRefreshPromise = null;
+      });
+    }
+    return templateRefreshPromise;
   }
 
   async function listOrders(filters, page, pageSize) {
-    let query = db.collection('orders');
-    if (Object.keys(filters || {}).length > 0) query = query.where(filters);
-    const totalResult = await query.count();
-    const pageResult = await query
-      .orderBy('submitted_at', 'desc')
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
-      .get();
+    function createQuery() {
+      let query = db.collection('orders');
+      if (Object.keys(filters || {}).length > 0) query = query.where(filters);
+      return query;
+    }
+
+    const [totalResult, pageResult] = await Promise.all([
+      createQuery().count(),
+      createQuery()
+        .orderBy('submitted_at', 'desc')
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .get()
+    ]);
     return { items: pageResult.data || [], total: totalResult.total || 0 };
   }
 
