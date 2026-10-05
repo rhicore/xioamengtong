@@ -45,9 +45,42 @@ ADMIN_CORS_ORIGINS=后台和顾客网页的正式域名，多个域名用逗号�
 ADMIN_COOKIE_SAMESITE=None
 ```
 
-`CLOUDBASE_APIKEY` 只能放在 `backend_api` 云托管环境变量中，不能写入前端代码、`.env` 文件或 Git。
+生产环境的 `CLOUDBASE_APIKEY` 只能放在 `backend_api` 云托管环境变量中，不能写入前端代码或 Git；本地联调如需访问真实 CloudBase 数据，可以只填写在被 `.gitignore` 忽略的 `backend_api/.env` 中。
 
 ## 本地开发
+
+Node.js 建议使用 20.19+ 或 22.12+。Windows 下原来的 PowerShell 命令仍然兼容；macOS/Linux 可以使用下面的命令。仓库现有的 `pnpm-lock.yaml` 和 `package-lock.json` 不要删除。
+
+### macOS/Linux
+
+```bash
+cd /Users/rhi/code/xioamengtong/backend_api
+pnpm install --frozen-lockfile
+
+cd ../customer_web
+pnpm install --frozen-lockfile
+
+cd ../admin_web
+npm ci
+```
+
+首次使用时复制环境模板（本机已经配置好的 `.env` / `.env.local` 不要提交）：
+
+```bash
+cp backend_api/.env.example backend_api/.env
+cp customer_web/.env.example customer_web/.env.local
+cp admin_web/.env.example admin_web/.env.local
+```
+
+本地开发时，三个目录的地址保持一致：backend 使用 `http://localhost:8787`，顾客端的 `VITE_API_BASE_URL` 和后台端的 `VITE_HTTP_API_BASE_URL` 也使用这个地址。
+
+分别在三个终端启动：
+
+```bash
+cd backend_api && pnpm start
+cd customer_web && pnpm run dev
+cd admin_web && npm run dev
+```
 
 分别安装三个目录的依赖：
 
@@ -121,6 +154,34 @@ cd D:\rhi\code\xiaomengtong\customer_web
 npm run build
 tcb hosting deploy dist customer -e 你的环境ID
 ```
+
+macOS/Linux 不需要全局安装 CLI，也可以直接使用：
+
+```bash
+pnpm dlx --package=@cloudbase/cli tcb login
+pnpm dlx --package=@cloudbase/cli tcb cloudrun deploy \
+  --env-id xiaomengtong-d5g5zuan5ae97c4ea \
+  --service-name notebook-backend-api \
+  --source backend_api --port 8787 --open-access-types PUBLIC --min-num 1 --wait
+
+pnpm dlx --package=@cloudbase/cli tcb hosting deploy admin_web/dist admin \
+  -e xiaomengtong-d5g5zuan5ae97c4ea
+pnpm dlx --package=@cloudbase/cli tcb hosting deploy customer_web/dist customer \
+  -e xiaomengtong-d5g5zuan5ae97c4ea
+```
+
+### GitHub 上传
+
+本机已经验证 GitHub SSH 身份可用，远程仓库是 `git@github.com:rhicore/xioamengtong.git`。提交前确认不要把 `.env`、`.env.local` 或 CloudBase API Key 加入暂存区：
+
+```bash
+git status
+git add README.md backend_api customer_web admin_web docs tests cloudbaserc.json
+git commit -m "同步项目配置"
+git push origin main
+```
+
+上面的命令只上传 Git 中已明确加入的文件；本地密钥文件已由 `.gitignore` 忽略。
 
 两个网页可以共用一个 CloudBase Hosting 环境，也可以以后迁移到其他静态托管；只要保持 `VITE_HTTP_API_BASE_URL` 指向通用 API，前端不需要改业务逻辑。
 
