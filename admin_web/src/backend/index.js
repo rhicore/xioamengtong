@@ -30,6 +30,21 @@ export async function batchDownload(orderIds = []) {
   return adapter.batchDownload(orderIds);
 }
 
+export async function markOrdersInProduction(orderIds = []) {
+  const adapter = await backend;
+  return adapter.markOrdersInProduction(orderIds);
+}
+
+export async function markOrdersCompleted(orderIds = []) {
+  const adapter = await backend;
+  return adapter.markOrdersCompleted(orderIds);
+}
+
+export async function deleteOrders(orderIds = []) {
+  const adapter = await backend;
+  return adapter.deleteOrders(orderIds);
+}
+
 export async function listAccounts() {
   const adapter = await backend;
   return adapter.listAccounts();

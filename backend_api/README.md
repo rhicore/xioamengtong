@@ -43,7 +43,7 @@ tcb cloudrun deploy --env-id xiaomengtong-d5g5zuan5ae97c4ea --service-name noteb
 
 顾客查询接口支持 `?preview=0` 快速模式。顾客网页先拿订单、类型和文件 ID，页面立即显示；已有图片通过图片接口在后台并行读取，不再阻塞订单页面。图片上传也会并行上传前后图片，并使用快速模式跳过无用的临时预览地址生成。
 
-管理端订单列表也使用 `preview=0` 快速返回，列表先显示，缩略图通过受保护的 `/api/v1/admin/order-previews` 接口后台批量补齐。批量下载使用有限并发读取图片，避免逐张串行等待；ZIP 对已经压缩的图片使用低压缩级别，优先保证生成速度。
+管理端订单列表也使用 `preview=0` 快速返回，列表先显示，缩略图通过受保护的 `/api/v1/admin/order-previews` 接口后台批量补齐。批量下载优先请求 `/api/v1/admin/batch-download-manifest`：后台只返回订单信息和云存储临时直链，浏览器并发直取图片并在本地用低压缩级别生成 ZIP，避免图片经过 CloudRun 中转；旧的 `/api/v1/admin/batch-download` 仍保留，作为兼容和兜底链路。服务端链路同样使用有限并发、失败重试和流式 ZIP，避免一次性把所有图片和 ZIP 堆在内存中。
 
 部署后需要在云托管服务环境变量中设置以下非敏感变量：
 

@@ -6,11 +6,13 @@ const { hashPassword } = require('../backend_api/src/auth');
 function createMemoryStore() {
   const accounts = new Map();
   const sessions = new Map();
+  const deletedFileIds = [];
   const orders = [
     {
       _id: 'order-1',
       order_id: '1',
       notebook_type: 'chexian',
+      platform: '拼多多',
       status: 'submitted',
       submitted_at: new Date('2026-09-22T09:00:00+08:00'),
       updated_at: new Date('2026-09-22T09:00:00+08:00'),
@@ -112,6 +114,20 @@ function createMemoryStore() {
     async getOrdersByIds(ids) {
       return orders.filter((order) => ids.includes(order.order_id));
     },
+    async updateOrder(id, data) {
+      const index = orders.findIndex((order) => order._id === id);
+      if (index < 0) return null;
+      orders[index] = { ...orders[index], ...data };
+      return orders[index];
+    },
+    async deleteOrder(id) {
+      const index = orders.findIndex((order) => order._id === id);
+      if (index >= 0) orders.splice(index, 1);
+    },
+    async deleteFiles(fileIds) {
+      deletedFileIds.push(...fileIds);
+      return { delete_list: fileIds };
+    },
     async getTempFileURLMap(fileIds) {
       return Object.fromEntries(fileIds.filter(Boolean).map((fileID) => [
         fileID,
@@ -125,7 +141,8 @@ function createMemoryStore() {
       const account = { ...data, _id: data._id || 'staff-' + nextId++ };
       accounts.set(account._id, account);
       return account;
-    }
+    },
+    deletedFileIds
   };
 }
 
@@ -139,9 +156,11 @@ async function request(baseUrl, path, options = {}, cookie = '') {
     }
   });
   const setCookie = response.headers.get('set-cookie') || '';
-  const body = response.headers.get('content-type')?.includes('application/zip')
-    ? Buffer.from(await response.arrayBuffer())
-    : await response.json();
+  const body = response.status === 204
+    ? null
+    : response.headers.get('content-type')?.includes('application/zip')
+      ? Buffer.from(await response.arrayBuffer())
+      : await response.json();
   return { response, body, setCookie };
 }
 
@@ -180,6 +199,13 @@ async function run() {
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.response.headers.get('access-control-allow-origin'), 'http://localhost:5176');
   assert.strictEqual(result.response.headers.get('access-control-allow-credentials'), 'true');
+
+  result = await request(baseUrl, '/api/v1/admin/orders', {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://localhost:5176', 'Access-Control-Request-Method': 'DELETE' }
+  });
+  assert.strictEqual(result.response.status, 204);
+  assert.match(result.response.headers.get('access-control-allow-methods'), /DELETE/);
 
   result = await request(baseUrl, '/api/v1/admin/me');
   assert.strictEqual(result.response.status, 401);
@@ -238,6 +264,37 @@ async function run() {
   }, adminCookie);
   assert.strictEqual(result.response.status, 200);
   assert.match(result.body.data['1'].front_url, /^https:\/\/mock\.local/);
+  assert.strictEqual(result.body.data['1'].front_download_url, '/api/v1/admin/orders/1/images/front');
+
+  let imageResult = await fetch(baseUrl + '/api/v1/admin/orders/1/images/front', {
+    headers: { Cookie: adminCookie }
+  });
+  assert.strictEqual(imageResult.status, 200);
+  assert.strictEqual(imageResult.headers.get('content-type'), 'image/jpeg');
+  assert.match(decodeURIComponent(imageResult.headers.get('content-disposition') || ''), /拼多多_车线本_1_前\.jpg/);
+  assert.strictEqual(Buffer.from(await imageResult.arrayBuffer()).toString(), 'mock image cloud://front-1.jpg');
+
+  result = await request(baseUrl, '/api/v1/admin/orders/status', {
+    method: 'PATCH',
+    body: JSON.stringify({ orderIds: ['1'], status: 'in_production' })
+  }, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.deepStrictEqual(result.body.data.updated_order_ids, ['1']);
+
+  result = await request(baseUrl, '/api/v1/admin/orders?preview=0', {}, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.strictEqual(result.body.data.items.find((item) => item.order_id === '1').status, 'in_production');
+
+  result = await request(baseUrl, '/api/v1/admin/orders/status', {
+    method: 'PATCH',
+    body: JSON.stringify({ orderIds: ['1'], status: 'completed' })
+  }, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.deepStrictEqual(result.body.data.updated_order_ids, ['1']);
+
+  result = await request(baseUrl, '/api/v1/admin/orders?preview=0', {}, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.strictEqual(result.body.data.items.find((item) => item.order_id === '1').status, 'completed');
 
   result = await request(baseUrl, '/api/v1/admin/batch-download', {
     method: 'POST',
@@ -246,8 +303,23 @@ async function run() {
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.response.headers.get('content-type'), 'application/zip');
   assert.ok(result.body.includes(Buffer.from('订单-1/订单信息.json')));
-  assert.ok(result.body.includes(Buffer.from('订单-1/车线本_A5_B5-1-前.jpg')));
-  assert.ok(result.body.includes(Buffer.from('订单-1/车线本_A5_B5-1-后.jpg')));
+  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_车线本_1_前.jpg')));
+  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_车线本_1_后.jpg')));
+
+  result = await request(baseUrl, '/api/v1/admin/batch-download?orderIds=1', {}, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.strictEqual(result.response.headers.get('content-type'), 'application/zip');
+  assert.ok(result.body.includes(Buffer.from('订单-1/订单信息.json')));
+
+  result = await request(baseUrl, '/api/v1/admin/orders', {
+    method: 'DELETE',
+    body: JSON.stringify({ orderIds: ['2'] })
+  }, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.deepStrictEqual(result.body.data.deleted_order_ids, ['2']);
+  assert.deepStrictEqual(result.body.data.deleted_file_ids, ['cloud://back-2.jpg']);
+  assert.deepStrictEqual(store.deletedFileIds, ['cloud://back-2.jpg']);
+  assert.strictEqual((await store.getOrdersByIds(['2'])).length, 0);
 
   result = await request(baseUrl, '/api/v1/admin/login', {
     method: 'POST',
@@ -257,6 +329,11 @@ async function run() {
   const operatorCookie = result.setCookie.split(';')[0];
 
   result = await request(baseUrl, '/api/v1/admin/accounts', {}, operatorCookie);
+  assert.strictEqual(result.response.status, 403);
+  result = await request(baseUrl, '/api/v1/admin/orders', {
+    method: 'DELETE',
+    body: JSON.stringify({ orderIds: ['1'] })
+  }, operatorCookie);
   assert.strictEqual(result.response.status, 403);
   result = await request(baseUrl, '/api/v1/admin/accounts/admin-id', {
     method: 'PATCH',

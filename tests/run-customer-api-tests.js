@@ -113,6 +113,34 @@ async function run() {
   });
   assert.equal(result.response.status, 400);
 
+  const submittedOrder = await store.getOrderByOrderId('WEB-001');
+  await store.updateOrder(submittedOrder._id, {
+    status: 'in_production',
+    production_started_at: new Date()
+  });
+
+  result = await request(baseUrl, '/api/v1/customer/orders/WEB-001');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.data.status, 'in_production');
+  assert.equal(result.body.data.status_display, '制作中');
+
+  const lockedForm = new FormData();
+  lockedForm.append('back', new Blob([Buffer.from('another-image')], { type: 'image/jpeg' }), 'back.jpg');
+  result = await request(baseUrl, '/api/v1/customer/orders/WEB-001/images', {
+    method: 'POST',
+    body: lockedForm
+  });
+  assert.equal(result.response.status, 409);
+  assert.match(result.body.message, /制作流程/);
+
+  result = await request(baseUrl, '/api/v1/customer/orders/WEB-001', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notebook_type: 'chexian', front_file_id: submittedOrder.front_file_id })
+  });
+  assert.equal(result.response.status, 409);
+  assert.match(result.body.message, /制作流程/);
+
   await new Promise((resolve) => server.close(resolve));
   console.log('customer api query, multipart upload and submit tests passed');
 }

@@ -1,5 +1,7 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { getImageBlobUrl, getImagePreviewUrls, getOrder, submitOrder, uploadImages } from './api.js';
+import notebookOneIcon from './assets/notebook-one-icon.png';
+import notebookTwoIcon from './assets/notebook-two-icon.png';
 
 const ImageEditor = lazy(() => import('./ImageEditor.jsx'));
 
@@ -16,7 +18,7 @@ function customerTemplateOptions(rawTemplates) {
       ...(twoImageTemplate || {}),
       slug: 'two_images',
       backend_slug: twoImageTemplate?.slug || 'chexian',
-      display_name: '两图',
+      display_name: '胶套本（两图）',
       description: '上传正面和反面，共 2 张图',
       image_count: 2,
       allow_blank: true
@@ -25,7 +27,7 @@ function customerTemplateOptions(rawTemplates) {
       ...(oneImageTemplate || {}),
       slug: 'one_image',
       backend_slug: oneImageTemplate?.slug || 'huoye',
-      display_name: '一张图',
+      display_name: '活页本（一图）',
       description: '只上传正面 1 张图',
       image_count: 1,
       allow_blank: false
@@ -42,6 +44,30 @@ function backendTypeSlug(selectedSlug, existingRawSlug) {
   return existingRawSlug === 'jiaotao' || existingRawSlug === 'chexian'
     ? existingRawSlug
     : 'chexian';
+}
+
+function customerStatusLabel(status) {
+  return {
+    draft: '用户已上传',
+    submitted: '用户已上传',
+    pending: '用户已上传',
+    in_production: '制作中',
+    completed: '已完成'
+  }[status] || '用户已上传';
+}
+
+function isCustomerLockedStatus(status) {
+  return status === 'in_production' || status === 'completed';
+}
+
+function IcpFooter() {
+  return (
+    <footer className="site-footer">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
+        辽ICP备2026024165号-1
+      </a>
+    </footer>
+  );
 }
 
 function imageState(url, fileId) {
@@ -69,6 +95,19 @@ export default function App() {
 
   const customerTemplates = customerTemplateOptions(templates);
   const selectedTemplate = customerTemplates.find((item) => item.slug === selectedType) || null;
+  const customerLocked = isCustomerLockedStatus(order?.status);
+  const lockMessage = order?.status === 'completed'
+    ? '订单已完成，图片已锁定，暂不支持上传或修改。'
+    : '订单已进入制作流程，图片已锁定，暂不支持上传或修改。';
+
+  useEffect(() => {
+    if (step === 'order') return;
+    // 移动端从订单输入页进入上传页时保留了上一页滚动位置，
+    // 需要主动回到页面顶部，让订单号、平台和状态提示立即可见。
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [step]);
 
   async function loadExistingImages(existingOrderId, existingImages) {
     try {
@@ -155,6 +194,10 @@ export default function App() {
   }
 
   function selectType(slug) {
+    if (customerLocked) {
+      setError(lockMessage);
+      return;
+    }
     if (selectedType && selectedType !== slug) {
       setImages({ front: { ...EMPTY_IMAGE, removed: true }, back: { ...EMPTY_IMAGE, removed: true } });
     }
@@ -163,6 +206,10 @@ export default function App() {
   }
 
   function chooseImage(side, event) {
+    if (customerLocked) {
+      setError(lockMessage);
+      return;
+    }
     const file = event.target.files && event.target.files[0];
     event.target.value = '';
     if (!file) return;
@@ -180,11 +227,19 @@ export default function App() {
   }
 
   function clearImage(side) {
+    if (customerLocked) {
+      setError(lockMessage);
+      return;
+    }
     if (images[side].url.startsWith('blob:')) URL.revokeObjectURL(images[side].url);
     setImages((current) => ({ ...current, [side]: { ...EMPTY_IMAGE, removed: true } }));
   }
 
   async function editImage(side) {
+    if (customerLocked) {
+      setError(lockMessage);
+      return;
+    }
     const image = images[side];
     if (!image.url) return;
     setError('');
@@ -212,6 +267,11 @@ export default function App() {
   }
 
   function applyEdit({ file, previewUrl }) {
+    if (customerLocked) {
+      setError(lockMessage);
+      cancelEdit();
+      return;
+    }
     const side = editor.side;
     const current = images[side];
     if (current.url.startsWith('blob:')) URL.revokeObjectURL(current.url);
@@ -225,6 +285,10 @@ export default function App() {
   }
 
   async function submit() {
+    if (customerLocked) {
+      setError(lockMessage);
+      return;
+    }
     if (!selectedTemplate) {
       setError('请选择类型');
       return;
@@ -289,6 +353,7 @@ export default function App() {
           {loading && <p className="query-progress">正在查询订单，请稍候。</p>}
           {error && <p className="error-box">{error}</p>}
         </section>
+        <IcpFooter />
       </main>
     );
   }
@@ -304,6 +369,7 @@ export default function App() {
           <p className="success-order">订单号：{orderId}</p>
           <button className="primary-button" onClick={resetToOrder}>返回首页</button>
         </section>
+        <IcpFooter />
       </main>
     );
   }
@@ -320,6 +386,11 @@ export default function App() {
             <span className={order?.platform ? 'platform-label' : 'platform-label unknown'}>
               {' · 平台：'}{order?.platform || '未知平台'}
             </span>
+            {order?.exists && (
+              <span className={`order-status-label${customerLocked ? ' locked' : ''}`}>
+                {' · 状态：'}{order.status_display || customerStatusLabel(order.status)}
+              </span>
+            )}
             {!order?.platform && (
               <span className="platform-warning">未知订单号，请检查订单号是否正确</span>
             )}
@@ -333,14 +404,20 @@ export default function App() {
             <h2>请正确选择类型</h2>
             <p>请先确认本子类型，选错会影响装订和图片张数。</p>
           </div>
-          {order?.exists && <span className="saved-badge">正在修改已有提交</span>}
+          {order?.exists && (
+            <span className={`saved-badge${customerLocked ? ' locked-badge' : ''}`}>
+              {customerLocked ? `${order.status_display || customerStatusLabel(order.status)}，已锁定` : '正在修改已有提交'}
+            </span>
+          )}
         </div>
+        {customerLocked && <p className="locked-notice">{lockMessage}</p>}
         <div className="type-list">
           {customerTemplates.map((template) => (
             <button
               className={`type-option ${selectedType === template.slug ? 'selected' : ''}`}
               key={template.slug}
               onClick={() => selectType(template.slug)}
+              disabled={customerLocked}
             >
               <span className="type-option-main">
                 <TemplateVisual slug={template.slug} />
@@ -373,6 +450,7 @@ export default function App() {
               onEdit={editImage}
               onClear={clearImage}
               editingSide={editingSide}
+              locked={customerLocked}
             />
             {selectedTemplate.image_count > 1 && (
               <ImagePicker
@@ -383,11 +461,12 @@ export default function App() {
                 onEdit={editImage}
                 onClear={clearImage}
                 editingSide={editingSide}
+                locked={customerLocked}
               />
             )}
           </div>
-          <button className="primary-button submit-button" onClick={submit} disabled={loading}>
-            {loading ? '提交中...' : '确认提交'}
+          <button className="primary-button submit-button" onClick={submit} disabled={loading || customerLocked}>
+            {customerLocked ? '制作中，无法修改' : loading ? '提交中...' : '确认提交'}
           </button>
           {message && <p className="success-text">{message}</p>}
           {error && <p className="error-box">{error}</p>}
@@ -408,6 +487,7 @@ export default function App() {
           />
         </Suspense>
       )}
+      <IcpFooter />
     </main>
   );
 }
@@ -420,34 +500,40 @@ function templateUploadHint(template) {
 
 function TemplateVisual({ slug }) {
   const imageCount = slug === 'one_image' ? '1张' : '2张';
+  const imageSource = slug === 'one_image' ? notebookOneIcon : notebookTwoIcon;
   return (
     <span className={`template-visual ${slug || 'default'}-visual`} aria-hidden="true">
-      <span className="template-visual-sheet template-visual-sheet-back" />
-      <span className="template-visual-sheet template-visual-sheet-front" />
+      <img className="template-visual-image" src={imageSource} alt="" />
       <span className="template-visual-count">{imageCount}</span>
     </span>
   );
 }
 
-function ImagePicker({ label, side, image, required, onChange, onEdit, editingSide }) {
+function ImagePicker({ label, side, image, required, onChange, onEdit, editingSide, locked = false }) {
   return (
     <div className="image-picker">
       <div className="picker-title">{label}{required && <em>必传</em>}</div>
       <div
-        className={`image-preview ${image.url ? 'has-image' : ''}`}
-        role={image.url ? 'button' : undefined}
-        tabIndex={image.url ? 0 : undefined}
-        onClick={() => image.url && onEdit(side)}
+        className={`image-preview ${image.url ? 'has-image' : ''}${locked ? ' locked' : ''}`}
+        role={image.url && !locked ? 'button' : undefined}
+        tabIndex={image.url && !locked ? 0 : undefined}
+        onClick={() => image.url && !locked && onEdit(side)}
         onKeyDown={(event) => {
-          if (image.url && (event.key === 'Enter' || event.key === ' ')) onEdit(side);
+          if (image.url && !locked && (event.key === 'Enter' || event.key === ' ')) onEdit(side);
         }}
-        aria-label={image.url ? `${label}，点击调整图片` : undefined}
+        aria-label={image.url ? (locked ? `${label}，制作中，图片已锁定` : `${label}，点击调整图片`) : undefined}
       >
         {image.url ? (
           <>
             <img src={image.url} alt={label} />
-            <span className="image-edit-hint">{editingSide === side ? '正在打开编辑器...' : '点击调整图片'}</span>
+            <span className="image-edit-hint">
+              {locked ? '制作中，图片已锁定' : editingSide === side ? '正在打开编辑器...' : '点击调整图片'}
+            </span>
           </>
+        ) : locked ? (
+          <div className="empty-image-picker locked">
+            <span>制作中，不能上传</span>
+          </div>
         ) : (
           <label className="empty-image-picker">
             <span>{image.loading ? '正在读取之前的图片...' : '点击选择图片'}</span>

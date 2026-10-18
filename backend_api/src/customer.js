@@ -11,6 +11,15 @@ const IMAGE_MIME_TYPES = new Set([
   'image/webp'
 ]);
 
+const CUSTOMER_LOCKED_STATUSES = new Set(['in_production', 'completed']);
+const ORDER_STATUS_LABELS = {
+  draft: '用户已上传',
+  submitted: '用户已上传',
+  pending: '用户已上传',
+  in_production: '制作中',
+  completed: '已完成'
+};
+
 function imageContentType(fileId) {
   const match = String(fileId || '').toLowerCase().match(/\.(jpg|jpeg|png|webp)(?:\?|$)/);
   if (!match) return 'application/octet-stream';
@@ -23,6 +32,10 @@ function customerError(status, message) {
   const error = new Error(message);
   error.status = status;
   return error;
+}
+
+function isCustomerOrderLocked(order) {
+  return Boolean(order && CUSTOMER_LOCKED_STATUSES.has(order.status));
 }
 
 function normalizeCustomerOrderId(value) {
@@ -84,6 +97,7 @@ function toPublicOrder(order, template, extra = {}) {
     platform: order.platform || detectedPlatform.platform,
     platform_detection: detectedPlatform,
     status: order.status || 'submitted',
+    status_display: ORDER_STATUS_LABELS[order.status] || '用户已上传',
     front_file_id: order.front_file_id || '',
     back_file_id: order.back_file_id || '',
     created_at: order.created_at || null,
@@ -189,6 +203,10 @@ function extensionFor(file) {
 
 async function uploadCustomerImages(store, value, files = {}, options = {}) {
   const orderId = normalizeCustomerOrderId(value);
+  const existing = await store.getOrderByOrderId(orderId);
+  if (isCustomerOrderLocked(existing)) {
+    throw customerError(409, '订单已进入制作流程，暂不支持修改图片');
+  }
   const uploaded = {};
   const orderPath = safeOrderPathPart(orderId);
 
@@ -231,6 +249,9 @@ async function saveCustomerOrder(store, value, body = {}) {
     store.getTemplateMap({ allowStale: true }),
     store.getOrderByOrderId(orderId)
   ]);
+  if (isCustomerOrderLocked(existing)) {
+    throw customerError(409, '订单已进入制作流程，暂不支持修改图片');
+  }
   const templates = templateOptions(templateMap);
   const template = findTemplate(templates, String(body.notebook_type || body.notebookType || '').trim());
   if (!template) throw customerError(400, '请选择有效的本子类型');

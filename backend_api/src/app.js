@@ -9,7 +9,15 @@ const {
   publicAccount,
   validatePassword
 } = require('./auth');
-const { createBatchDownload, getOrderImagePreviews, listOrders } = require('./orders');
+const {
+  getBatchDownloadManifest,
+  deleteOrders,
+  getAdminOrderImage,
+  getOrderImagePreviews,
+  listOrders,
+  streamBatchDownload,
+  updateOrdersStatus
+} = require('./orders');
 const {
   getCustomerImage,
   getCustomerImageUrls,
@@ -17,7 +25,6 @@ const {
   saveCustomerOrder,
   uploadCustomerImages
 } = require('./customer');
-
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -27,6 +34,15 @@ class HttpError extends Error {
 
 function success(data, message = 'success') {
   return { code: 200, message, data };
+}
+
+function readBatchOrderIds(req) {
+  if (req.method === 'GET') {
+    const value = req.query && req.query.orderIds;
+    if (Array.isArray(value)) return value;
+    return value ? String(value).split(',') : [];
+  }
+  return req.body && req.body.orderIds;
 }
 
 function readCookieOptions(env) {
@@ -71,7 +87,7 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       res.setHeader('Vary', 'Origin');
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -222,6 +238,47 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
     }
   });
 
+  app.get('/api/v1/admin/orders/:orderId/images/:side', async (req, res, next) => {
+    try {
+      await requireAuth(req);
+      const result = await getAdminOrderImage(store, req.params.orderId, req.params.side);
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="download.jpg"; filename*=UTF-8''${encodeURIComponent(result.fileName)}`
+      );
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.send(result.fileContent);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.patch('/api/v1/admin/orders/status', async (req, res, next) => {
+    try {
+      await requireAuth(req);
+      const body = req.body || {};
+      if (!['in_production', 'completed'].includes(body.status)) {
+        throw new HttpError(400, '订单状态不正确');
+      }
+      const result = await updateOrdersStatus(store, body.orderIds, body.status, now);
+      const label = body.status === 'completed' ? '已完成' : '制作中';
+      return res.json(success(result, `订单已标记为${label}`));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.delete('/api/v1/admin/orders', async (req, res, next) => {
+    try {
+      await requireAdmin(req);
+      const result = await deleteOrders(store, req.body && req.body.orderIds);
+      return res.json(success(result, '订单及相关图片已删除'));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.post('/api/v1/admin/order-previews', async (req, res, next) => {
     try {
       await requireAuth(req);
@@ -234,17 +291,34 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
     }
   });
 
-  app.post('/api/v1/admin/batch-download', async (req, res, next) => {
+  app.post('/api/v1/admin/batch-download-manifest', async (req, res, next) => {
     try {
       await requireAuth(req);
-      const result = await createBatchDownload(store, req.body && req.body.orderIds);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename="' + result.filename + '"');
-      return res.send(result.content);
+      return res.json(success(await getBatchDownloadManifest(
+        store,
+        req.body && req.body.orderIds
+      )));
     } catch (error) {
       return next(error);
     }
   });
+
+  async function handleBatchDownload(req, res, next) {
+    try {
+      await requireAuth(req);
+      await streamBatchDownload(store, readBatchOrderIds(req), res);
+      return undefined;
+    } catch (error) {
+      // ZIP 已经开始传输后无法再返回 JSON；直接中止响应，前端会收到网络失败并可重试。
+      if (res.headersSent) return res.destroy(error);
+      return next(error);
+    }
+  }
+
+  // GET 让浏览器直接接管文件下载，不再由前端 fetch() 把整个 ZIP 读进内存，
+  // 大批量下载时可以明显降低“fail to fetch”和页面卡顿概率；POST 保留给旧客户端。
+  app.get('/api/v1/admin/batch-download', handleBatchDownload);
+  app.post('/api/v1/admin/batch-download', handleBatchDownload);
 
   app.get('/api/v1/admin/accounts', async (req, res, next) => {
     try {

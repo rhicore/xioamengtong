@@ -3,10 +3,13 @@ import { useEffect, useState } from 'react';
 import {
   batchDownload,
   createAccount,
+  deleteOrders,
   getCurrentUser,
   getOrderPreviews,
   listOrders,
   listAccounts,
+  markOrdersCompleted,
+  markOrdersInProduction,
   signIn,
   signOut,
   updateAccount
@@ -25,6 +28,30 @@ const EMPTY_FILTERS = {
   created_to: ''
 };
 
+function orderStatusLabel(status) {
+  return {
+    draft: '用户已上传',
+    submitted: '用户已上传',
+    pending: '用户已上传',
+    in_production: '制作中',
+    completed: '已完成'
+  }[status] || '用户已上传';
+}
+
+function orderImageUrl(order, side) {
+  return order[side + '_download_url'] || order[side + '_url'] || '';
+}
+
+function IcpFooter() {
+  return (
+    <footer className="site-footer">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
+        辽ICP备2026024165号-1
+      </a>
+    </footer>
+  );
+}
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -35,6 +62,7 @@ export default function App() {
   const [notebookTypeOpen, setNotebookTypeOpen] = useState(false);
   const [orders, setOrders] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0 });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -162,7 +190,7 @@ export default function App() {
   }
 
   function openImagePreview(order, side) {
-    const url = order[side + '_url'];
+    const url = orderImageUrl(order, side);
     if (!url) return;
     setImagePreviewSize(null);
     setImagePreview({
@@ -192,10 +220,86 @@ export default function App() {
     setMessage('正在生成下载包...');
     try {
       const result = await batchDownload(selectedIds);
-      window.location.href = result.download_url;
-      setMessage('下载包已生成，链接 15 分钟内有效');
+      const link = document.createElement('a');
+      link.href = result.download_url;
+      link.download = '';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      if (result.client_generated) {
+        window.setTimeout(() => URL.revokeObjectURL(result.download_url), 60 * 1000);
+        setMessage('下载已开始');
+      } else {
+        setMessage('下载已开始，压缩包正在后台生成');
+      }
     } catch (error) {
       setMessage(error.message || '批量下载失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleMarkInProduction() {
+    return handleMarkStatus('in_production');
+  }
+
+  async function handleMarkStatus(status) {
+    if (selectedIds.length === 0) {
+      setMessage('请先选择订单');
+      return;
+    }
+
+    setStatusMenuOpen(false);
+    const statusLabel = status === 'completed' ? '已完成' : '制作中';
+    setLoading(true);
+    setMessage(`正在标记为${statusLabel}...`);
+    try {
+      const result = status === 'completed'
+        ? await markOrdersCompleted(selectedIds)
+        : await markOrdersInProduction(selectedIds);
+      await loadOrders(pagination.page);
+      const updatedCount = result.updated_order_ids?.length || 0;
+      const unchangedCount = result.unchanged_order_ids?.length || 0;
+      const skippedCount = (result.skipped_order_ids?.length || 0) + (result.missing_order_ids?.length || 0);
+      const details = [
+        updatedCount > 0 ? `${updatedCount} 个订单已标记为${statusLabel}` : '',
+        unchangedCount > 0 ? `${unchangedCount} 个订单原本就是${statusLabel}` : '',
+        skippedCount > 0 ? `${skippedCount} 个订单未处理` : ''
+      ].filter(Boolean);
+      setMessage(details.join('，') || '没有订单状态发生变化');
+    } catch (error) {
+      setMessage(error.message || '订单状态更新失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteOrders() {
+    if (selectedIds.length === 0) {
+      setMessage('请先选择订单');
+      return;
+    }
+    const confirmed = window.confirm(
+      `确认删除选中的 ${selectedIds.length} 个订单吗？\n订单记录和已上传图片都会永久删除，删除后无法恢复。`
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setMessage('正在删除订单及图片...');
+    try {
+      const result = await deleteOrders(selectedIds);
+      await loadOrders(Math.min(pagination.page, Math.max(Math.ceil(
+        Math.max(pagination.total - (result.deleted_order_ids?.length || 0), 0) / pagination.pageSize
+      ), 1)));
+      const deletedCount = result.deleted_order_ids?.length || 0;
+      const missingCount = result.missing_order_ids?.length || 0;
+      setMessage([
+        deletedCount > 0 ? `${deletedCount} 个订单及图片已删除` : '',
+        missingCount > 0 ? `${missingCount} 个订单未找到` : ''
+      ].filter(Boolean).join('，') || '没有订单被删除');
+    } catch (error) {
+      setMessage(error.message || '订单删除失败，原订单仍保留');
     } finally {
       setLoading(false);
     }
@@ -294,6 +398,7 @@ export default function App() {
           <h1>正在检查登录状态</h1>
           <p className="muted">请稍候...</p>
         </div>
+        <IcpFooter />
       </main>
     );
   }
@@ -329,6 +434,7 @@ export default function App() {
           </button>
           {message && <p className="error-text">{message}</p>}
         </form>
+        <IcpFooter />
       </main>
     );
   }
@@ -538,9 +644,8 @@ export default function App() {
               onChange={(event) => setFilters({ ...filters, status: event.target.value })}
             >
               <option value="">全部</option>
-              <option value="draft">未提交</option>
-              <option value="submitted">已提交</option>
-              <option value="pending">待处理</option>
+              <option value="submitted">用户已上传</option>
+              <option value="in_production">制作中</option>
               <option value="completed">已完成</option>
             </select>
           </label>
@@ -575,6 +680,42 @@ export default function App() {
           <button className="secondary-button" onClick={handleBatchDownload} disabled={loading || selectedIds.length === 0}>
             批量下载 ({selectedIds.length})
           </button>
+          <div className="status-action-menu">
+            <button
+              className="secondary-button status-menu-trigger"
+              onClick={() => setStatusMenuOpen((open) => !open)}
+              disabled={loading || selectedIds.length === 0}
+              aria-expanded={statusMenuOpen}
+              aria-haspopup="menu"
+            >
+              标记为 ({selectedIds.length})
+            </button>
+            {statusMenuOpen && (
+              <div className="status-menu" role="menu">
+                <button
+                  type="button"
+                  className="status-menu-option production-button"
+                  onClick={handleMarkInProduction}
+                  role="menuitem"
+                >
+                  标记为制作中 ({selectedIds.length})
+                </button>
+                <button
+                  type="button"
+                  className="status-menu-option completed-button"
+                  onClick={() => handleMarkStatus('completed')}
+                  role="menuitem"
+                >
+                  标记为已完成 ({selectedIds.length})
+                </button>
+              </div>
+            )}
+          </div>
+          {operator?.role === 'admin' && (
+            <button className="secondary-button danger-button" onClick={handleDeleteOrders} disabled={loading || selectedIds.length === 0}>
+              删除订单 ({selectedIds.length})
+            </button>
+          )}
           {dateRangeInvalid
             ? <span className="error-text">结束日期不能早于开始日期</span>
             : message && <span className="status-text">{message}</span>}
@@ -601,22 +742,22 @@ export default function App() {
                   <td className="strong">{order.order_id}</td>
                   <td>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
                   <td>{order.display_name || order.notebook_type}</td>
-                <td><span className={`status-pill ${order.status}`}>{order.status === 'submitted' ? '已提交' : order.status === 'completed' ? '已完成' : order.status === 'draft' ? '未提交' : '待处理'}</span></td>
+                <td><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>
                 <td>
                   <div className="order-image-cell">
-                    {order.front_url && (
+                    {orderImageUrl(order, 'front') && (
                       <button className="image-thumb-button" onClick={() => openImagePreview(order, 'front')} aria-label={`${order.order_id} 前图`}>
-                        <img src={order.front_url} alt="前图" />
+                        <img src={orderImageUrl(order, 'front')} alt="前图" />
                       </button>
                     )}
-                    {order.back_url && (
+                    {orderImageUrl(order, 'back') && (
                       <button className="image-thumb-button" onClick={() => openImagePreview(order, 'back')} aria-label={`${order.order_id} 后图`}>
-                        <img src={order.back_url} alt="后图" />
+                        <img src={orderImageUrl(order, 'back')} alt="后图" />
                       </button>
                     )}
-                    {!order.front_url && !order.back_url && (order.front_file_id || order.back_file_id)
+                    {!orderImageUrl(order, 'front') && !orderImageUrl(order, 'back') && (order.front_file_id || order.back_file_id)
                       ? <span className="image-empty">读取中…</span>
-                      : (!order.front_url && !order.back_url && <span className="image-empty">无图片</span>)}
+                      : (!orderImageUrl(order, 'front') && !orderImageUrl(order, 'back') && <span className="image-empty">无图片</span>)}
                   </div>
                 </td>
                 <td className="time-cell">
@@ -664,6 +805,7 @@ export default function App() {
       )}
       </>
       )}
+      <IcpFooter />
     </main>
   );
 }

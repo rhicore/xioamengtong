@@ -9,6 +9,19 @@ node tests/run-admin-web-tests.js
 node tests/run-customer-web-tests.js
 ```
 
+## 线上只读压测
+
+`run-production-load-test.js` 只请求静态页面、订单查询、图片地址和后台订单列表，不上传图片、不创建订单。默认测试并发 `1/5/10`，可通过环境变量调整：
+
+```powershell
+$env:LOAD_TEST_ADMIN_USER = "admin"
+$env:LOAD_TEST_ADMIN_PASSWORD = "你的密码"
+$env:LOAD_TEST_REQUESTS = "24"
+node tests/run-production-load-test.js https://xiaomengtong.site
+```
+
+测试后台接口时只登录一次并复用会话；不要把密码写进脚本或提交到 Git。高并发测试前应先确认目标环境允许压测。
+
 ## 测试范围
 
 ### `run-backend-api-tests.js`

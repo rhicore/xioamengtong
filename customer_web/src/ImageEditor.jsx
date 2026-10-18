@@ -2,19 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 
 const VIEWPORT_WIDTH = 360;
 const VIEWPORT_HEIGHT = 480;
-const OUTPUT_WIDTH = 1800;
-const OUTPUT_HEIGHT = 2400;
+const MIN_OUTPUT_WIDTH = 1800;
+const MIN_OUTPUT_HEIGHT = 2400;
+const MIN_SOURCE_CROP_WIDTH = 240;
+const MIN_SOURCE_CROP_HEIGHT = 320;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function getDisplayTransform(image, zoom, offset) {
-  const coverScale = Math.max(
+function getFitScale(image) {
+  return Math.min(
     VIEWPORT_WIDTH / image.naturalWidth,
     VIEWPORT_HEIGHT / image.naturalHeight
   );
-  const displayScale = coverScale * zoom;
+}
+
+function getMaxZoom(image) {
+  const fitScale = getFitScale(image);
+  const maxZoomX = VIEWPORT_WIDTH / (fitScale * MIN_SOURCE_CROP_WIDTH);
+  const maxZoomY = VIEWPORT_HEIGHT / (fitScale * MIN_SOURCE_CROP_HEIGHT);
+  return Math.max(1, Math.min(maxZoomX, maxZoomY));
+}
+
+function getDisplayTransform(image, zoom, offset) {
+  const fitScale = getFitScale(image);
+  const displayScale = fitScale * zoom;
   const displayWidth = image.naturalWidth * displayScale;
   const displayHeight = image.naturalHeight * displayScale;
   return {
@@ -23,6 +36,22 @@ function getDisplayTransform(image, zoom, offset) {
     displayHeight,
     x: (VIEWPORT_WIDTH - displayWidth) / 2 + offset.x,
     y: (VIEWPORT_HEIGHT - displayHeight) / 2 + offset.y
+  };
+}
+
+function getSourceCropSize(image, zoom) {
+  const displayScale = getFitScale(image) * zoom;
+  return {
+    width: VIEWPORT_WIDTH / displayScale,
+    height: VIEWPORT_HEIGHT / displayScale
+  };
+}
+
+function getOutputSize(image, zoom) {
+  const sourceCrop = getSourceCropSize(image, zoom);
+  return {
+    width: Math.max(MIN_OUTPUT_WIDTH, Math.round(sourceCrop.width)),
+    height: Math.max(MIN_OUTPUT_HEIGHT, Math.round(sourceCrop.height))
   };
 }
 
@@ -61,27 +90,22 @@ function drawPreview(canvas, image, zoom, offset) {
 
 function createCroppedFile(image, zoom, offset, name) {
   const transform = getDisplayTransform(image, zoom, offset);
-  const sourceWidth = VIEWPORT_WIDTH / transform.displayScale;
-  const sourceHeight = VIEWPORT_HEIGHT / transform.displayScale;
-  const sourceX = (image.naturalWidth - sourceWidth) / 2 - offset.x / transform.displayScale;
-  const sourceY = (image.naturalHeight - sourceHeight) / 2 - offset.y / transform.displayScale;
+  const outputSize = getOutputSize(image, zoom);
   const output = document.createElement('canvas');
-  output.width = OUTPUT_WIDTH;
-  output.height = OUTPUT_HEIGHT;
+  output.width = outputSize.width;
+  output.height = outputSize.height;
   const context = output.getContext('2d');
   if (!context) throw new Error('当前浏览器不支持图片编辑');
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  context.fillRect(0, 0, outputSize.width, outputSize.height);
+  const outputScaleX = outputSize.width / VIEWPORT_WIDTH;
+  const outputScaleY = outputSize.height / VIEWPORT_HEIGHT;
   context.drawImage(
     image,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
-    0,
-    0,
-    OUTPUT_WIDTH,
-    OUTPUT_HEIGHT
+    transform.x * outputScaleX,
+    transform.y * outputScaleY,
+    transform.displayWidth * outputScaleX,
+    transform.displayHeight * outputScaleY
   );
 
   return new Promise((resolve, reject) => {
@@ -113,6 +137,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
   const [activeSourceName, setActiveSourceName] = useState(sourceName);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [maxZoom, setMaxZoom] = useState(1);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [applying, setApplying] = useState(false);
@@ -125,8 +150,10 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
   useEffect(() => {
     const image = new Image();
     image.crossOrigin = 'anonymous';
+    setLoaded(false);
     image.onload = () => {
       imageRef.current = image;
+      setMaxZoom(getMaxZoom(image));
       setLoaded(true);
       setError('');
     };
@@ -146,7 +173,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
     if (loaded && imageRef.current && canvasRef.current) {
       drawPreview(canvasRef.current, imageRef.current, zoom, offset);
     }
-  }, [loaded, zoom, offset]);
+  }, [activeSourceUrl, loaded, zoom, offset]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -157,7 +184,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
   }, [applying, onCancel]);
 
   function updateZoom(value) {
-    const nextZoom = Number(value);
+    const nextZoom = clamp(Number(value), 1, maxZoom);
     const image = imageRef.current;
     zoomRef.current = nextZoom;
     setZoom(nextZoom);
@@ -214,7 +241,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
       const nextZoom = clamp(
         pinch.startZoom * distanceBetween(first, second) / pinch.startDistance,
         1,
-        3
+        maxZoom
       );
       const midpoint = midpointBetween(first, second);
       const nextOffset = clampOffset(imageRef.current, nextZoom, {
@@ -317,10 +344,6 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
         </div>
         <p className="editor-tip">拖动图片调整位置，使用下方滑块缩放，框内区域就是最终上传内容。</p>
         <p className="editor-warning">裁切会有 3–5mm 误差，重要文字图案请远离照片四周边缘。</p>
-        <label className="editor-replace-button">
-          更换图片
-          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceImage} disabled={applying} />
-        </label>
         <div className="editor-canvas-wrap">
           {loaded ? (
             <canvas
@@ -341,7 +364,7 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
             aria-label="图片缩放"
             type="range"
             min="1"
-            max="3"
+            max={maxZoom}
             step="0.01"
             value={zoom}
             onChange={(event) => updateZoom(event.target.value)}
@@ -353,7 +376,10 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
         {error && <p className="error-box editor-error">{error}</p>}
         <div className="editor-actions">
           {onClear && <button className="editor-clear-button" onClick={onClear} disabled={applying}>清除图片</button>}
-          <button className="clear-button" onClick={onCancel} disabled={applying}>取消</button>
+          <label className="clear-button editor-replace-action">
+            更换图片
+            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceImage} disabled={applying} />
+          </label>
           <button className="primary-button" onClick={apply} disabled={!loaded || applying}>
             {applying ? '处理中...' : '使用裁切结果'}
           </button>

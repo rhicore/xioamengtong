@@ -1,4 +1,49 @@
 const cloudbase = require('@cloudbase/node-sdk');
+const dns = require('dns');
+const http = require('http');
+const https = require('https');
+
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 16 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+
+function downloadHttpFile(url, redirectCount = 0) {
+  if (redirectCount > 3) return Promise.reject(new Error('云存储文件重定向次数过多'));
+  const target = new URL(url);
+  const isHttps = target.protocol === 'https:';
+  const transport = isHttps ? https : http;
+  const agent = isHttps ? httpsAgent : httpAgent;
+  return new Promise((resolve, reject) => {
+    const request = transport.get({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      path: target.pathname + target.search,
+      agent,
+      family: 4,
+      lookup(hostname, options, callback) {
+        dns.lookup(hostname, { family: 4 }, callback);
+      }
+    }, (response) => {
+      if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+        response.resume();
+        const location = response.headers.location;
+        if (!location) return reject(new Error('云存储文件重定向地址为空'));
+        return resolve(downloadHttpFile(new URL(location, target).toString(), redirectCount + 1));
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        return reject(new Error('云存储文件下载失败（' + response.statusCode + '）'));
+      }
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve(Buffer.concat(chunks)));
+      response.on('error', reject);
+      return undefined;
+    });
+    request.setTimeout(60000, () => request.destroy(new Error('云存储文件下载超时')));
+    request.on('error', reject);
+  });
+}
 
 function createCloudbaseStore(options = {}) {
   const envId = process.env.CLOUDBASE_ENV_ID || process.env.TCB_ENV_ID || 'xiaomengtong-d5g5zuan5ae97c4ea';
@@ -169,8 +214,19 @@ function createCloudbaseStore(options = {}) {
     return getOrderById(id);
   }
 
+  async function deleteOrder(id) {
+    if (!id) return;
+    await db.collection('orders').doc(id).remove();
+  }
+
   async function uploadFile(cloudPath, fileContent) {
     return cloudbaseApp.uploadFile({ cloudPath, fileContent });
+  }
+
+  async function deleteFiles(fileIds) {
+    const validFileIds = [...new Set((fileIds || []).filter(Boolean))];
+    if (validFileIds.length === 0) return { delete_list: [] };
+    return cloudbaseApp.deleteFile({ fileList: validFileIds });
   }
 
   async function getTempFileURLMap(fileIds) {
@@ -191,6 +247,11 @@ function createCloudbaseStore(options = {}) {
     return result.fileContent;
   }
 
+  async function downloadFileFast(fileID, tempFileURL) {
+    if (!tempFileURL) return downloadFile(fileID);
+    return downloadHttpFile(tempFileURL);
+  }
+
   return {
     db,
     getAccountByUsername,
@@ -209,9 +270,12 @@ function createCloudbaseStore(options = {}) {
     getOrderByOrderId,
     createOrder,
     updateOrder,
+    deleteOrder,
     uploadFile,
+    deleteFiles,
     getTempFileURLMap,
-    downloadFile
+    downloadFile,
+    downloadFileFast
   };
 }
 

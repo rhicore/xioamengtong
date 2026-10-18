@@ -13,6 +13,18 @@ function failure(message, status = 400) {
   return error;
 }
 
+function imageContentType(fileID) {
+  const value = String(fileID || '').toLowerCase();
+  if (value.endsWith('.png')) return 'image/png';
+  if (value.endsWith('.webp')) return 'image/webp';
+  if (value.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+function buildAdminImageDownloadUrl(orderId, side) {
+  return `/api/v1/admin/orders/${encodeURIComponent(orderId)}/images/${side}`;
+}
+
 function contains(db, value) {
   const escaped = String(value).replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
   return db.RegExp({ regexp: escaped, options: 'i' });
@@ -128,8 +140,119 @@ async function getOrderImagePreviews(store, orderIds = []) {
 
   return Object.fromEntries(orders.map((order) => [order.order_id, {
     front_url: imageUrls[order.front_file_id] || '',
-    back_url: imageUrls[order.back_file_id] || ''
+    back_url: imageUrls[order.back_file_id] || '',
+    front_download_url: order.front_file_id
+      ? buildAdminImageDownloadUrl(order.order_id, 'front')
+      : '',
+    back_download_url: order.back_file_id
+      ? buildAdminImageDownloadUrl(order.order_id, 'back')
+      : ''
   }]));
+}
+
+async function getAdminOrderImage(store, value, side) {
+  const orderId = String(value || '').trim();
+  if (!orderId || !['front', 'back'].includes(side)) throw failure('图片不存在', 404);
+  const order = typeof store.getOrderByOrderId === 'function'
+    ? await store.getOrderByOrderId(orderId)
+    : (await store.getOrdersByIds([orderId]))[0];
+  const fileID = order && order[side + '_file_id'];
+  if (!fileID) throw failure('图片不存在', 404);
+
+  try {
+    const [templateMap, fileContent] = await Promise.all([
+      store.getTemplateMap(),
+      store.downloadFile(fileID)
+    ]);
+    return {
+      fileContent,
+      contentType: imageContentType(fileID),
+      fileName: buildDownloadFileName(
+        order,
+        templateMap[order.notebook_type],
+        side,
+        '.jpg'
+      )
+    };
+  } catch (error) {
+    console.warn('admin image download unavailable', error.message || error);
+    throw failure('图片不存在或已失效，请重新上传', 404);
+  }
+}
+
+function normalizeOrderIds(orderIds, limitMessage) {
+  const normalizedIds = [...new Set((Array.isArray(orderIds) ? orderIds : [])
+    .map((id) => String(id).trim()).filter(Boolean))];
+  if (normalizedIds.length === 0) throw failure('至少选择一个订单');
+  if (normalizedIds.length > 100) throw failure(limitMessage);
+  return normalizedIds;
+}
+
+async function updateOrdersStatus(store, orderIds, status, now = () => new Date()) {
+  const normalizedIds = normalizeOrderIds(orderIds, '一次最多处理 100 个订单');
+  if (!['in_production', 'completed'].includes(status)) {
+    throw failure('订单状态不正确');
+  }
+
+  const orders = await store.getOrdersByIds(normalizedIds);
+  const foundIds = new Set(orders.map((order) => order.order_id));
+  const missingOrderIds = normalizedIds.filter((orderId) => !foundIds.has(orderId));
+  const results = await Promise.all(orders.map(async (order) => {
+    if (order.status === status) {
+      return { orderId: order.order_id, action: 'unchanged' };
+    }
+    if (status === 'in_production' && order.status === 'completed') {
+      return { orderId: order.order_id, action: 'skipped' };
+    }
+
+    const patch = { status, updated_at: now() };
+    if (status === 'in_production') patch.production_started_at = order.production_started_at || now();
+    if (status === 'completed') patch.completed_at = order.completed_at || now();
+    await store.updateOrder(order._id, patch);
+    return { orderId: order.order_id, action: 'updated' };
+  }));
+
+  return {
+    status,
+    updated_order_ids: results.filter((item) => item.action === 'updated').map((item) => item.orderId),
+    unchanged_order_ids: results.filter((item) => item.action === 'unchanged').map((item) => item.orderId),
+    skipped_order_ids: results.filter((item) => item.action === 'skipped').map((item) => item.orderId),
+    missing_order_ids: missingOrderIds
+  };
+}
+
+async function deleteOrders(store, orderIds) {
+  const normalizedIds = normalizeOrderIds(orderIds, '一次最多删除 100 个订单');
+  const orders = await store.getOrdersByIds(normalizedIds);
+  const foundIds = new Set(orders.map((order) => order.order_id));
+  const missingOrderIds = normalizedIds.filter((orderId) => !foundIds.has(orderId));
+  const fileIds = [...new Set(orders.flatMap((order) => [
+    order.front_file_id,
+    order.back_file_id
+  ].filter(Boolean)))];
+
+  if (fileIds.length > 0) {
+    if (typeof store.deleteFiles !== 'function') {
+      throw failure('当前存储适配器不支持删除订单图片', 500);
+    }
+    // 先清理云存储文件，再删除订单记录；图片清理失败时保留订单，方便重试，避免产生“记录已删但图片还在”的孤儿数据。
+    await store.deleteFiles(fileIds);
+  }
+
+  if (typeof store.deleteOrder !== 'function') {
+    throw failure('当前存储适配器不支持删除订单记录', 500);
+  }
+  await Promise.all(orders.map((order) => store.deleteOrder(order._id)));
+
+  return {
+    deleted_order_ids: orders.map((order) => order.order_id),
+    missing_order_ids: missingOrderIds,
+    deleted_file_ids: fileIds
+  };
+}
+
+async function markOrdersInProduction(store, orderIds, now = () => new Date()) {
+  return updateOrdersStatus(store, orderIds, 'in_production', now);
 }
 
 function serializeDate(value) {
@@ -176,35 +299,115 @@ function createZip(entries) {
   });
 }
 
-async function createBatchDownload(store, orderIds) {
-  const normalizedIds = [...new Set((Array.isArray(orderIds) ? orderIds : [])
-    .map((id) => String(id).trim()).filter(Boolean))];
-  if (normalizedIds.length === 0) throw failure('至少选择一个订单');
-  if (normalizedIds.length > 100) throw failure('一次最多下载 100 个订单');
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
-  const templateMap = await store.getTemplateMap();
-  const orders = await store.getOrdersByIds(normalizedIds);
+async function downloadFileWithRetry(store, fileID, tempFileURL, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await (typeof store.downloadFileFast === 'function'
+        ? store.downloadFileFast(fileID, tempFileURL)
+        : store.downloadFile(fileID));
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await sleep(250 * (2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function getBatchDownloadContext(store, orderIds) {
+  const normalizedIds = normalizeOrderIds(orderIds, '一次最多下载 100 个订单');
+  const [templateMap, orders] = await Promise.all([
+    store.getTemplateMap(),
+    store.getOrdersByIds(normalizedIds)
+  ]);
   if (orders.length === 0) throw failure('没有找到所选订单');
+  let fileUrls = {};
+  if (typeof store.getTempFileURLMap === 'function') {
+    try {
+      const fileIds = orders.flatMap((order) => [order.front_file_id, order.back_file_id]);
+      const chunks = [];
+      for (let index = 0; index < fileIds.length; index += 50) {
+        chunks.push(fileIds.slice(index, index + 50));
+      }
+      const urlMaps = await mapWithConcurrency(chunks, 4, (chunk) => store.getTempFileURLMap(chunk));
+      fileUrls = Object.assign({}, ...urlMaps);
+    } catch (error) {
+      console.warn('batch download temp urls unavailable, fallback to SDK download', error.message || error);
+    }
+  }
+  return { templateMap, orders, fileUrls };
+}
 
-  const orderEntries = await mapWithConcurrency(orders, 8, async (order) => {
-    const folderName = buildOrderFolderName(order);
-    const entries = [{
+async function getBatchDownloadManifest(store, orderIds) {
+  const { templateMap, orders, fileUrls } = await getBatchDownloadContext(store, orderIds);
+  const entries = [];
+
+  orders.forEach((order) => {
+    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
+    entries.push({
+      name: entry.name,
+      content: entry.content.toString('utf8')
+    });
+
+    ['front', 'back'].forEach((side) => {
+      const fileID = order[side + '_file_id'];
+      const url = fileID ? fileUrls[fileID] : '';
+      if (!url) return;
+      entries.push({
+        name: folderName + '/' + buildDownloadFileName(
+          order,
+          templateMap[order.notebook_type],
+          side,
+          '.jpg'
+        ),
+        url
+      });
+    });
+  });
+
+  return {
+    filename: 'orders-' + Date.now() + '.zip',
+    entries
+  };
+}
+
+function buildOrderInfoEntry(order, templateMap) {
+  const folderName = buildOrderFolderName(order);
+  return {
+    folderName,
+    entry: {
       name: folderName + '/订单信息.json',
       content: Buffer.from(JSON.stringify(buildOrderInfo(order, templateMap[order.notebook_type]), null, 2) + '\n', 'utf8')
-    }];
-    const imageEntries = await Promise.all(['front', 'back'].map(async (side) => {
-      const fileID = order[side + '_file_id'];
-      if (!fileID) return null;
-      const content = await store.downloadFile(fileID);
-      const fileName = buildDownloadFileName(
-        order,
-        templateMap[order.notebook_type],
-        side,
-        '.jpg'
-      );
-      return { name: folderName + '/' + fileName, content };
-    }));
-    return entries.concat(imageEntries.filter(Boolean));
+    }
+  };
+}
+
+async function getOrderImageEntries(store, order, templateMap, folderName, fileUrls = {}) {
+  const imageEntries = await Promise.all(['front', 'back'].map(async (side) => {
+    const fileID = order[side + '_file_id'];
+    if (!fileID) return null;
+    const content = await downloadFileWithRetry(store, fileID, fileUrls[fileID]);
+    const fileName = buildDownloadFileName(
+      order,
+      templateMap[order.notebook_type],
+      side,
+      '.jpg'
+    );
+    return { name: folderName + '/' + fileName, content };
+  }));
+  return imageEntries.filter(Boolean);
+}
+
+async function createBatchDownload(store, orderIds) {
+  const { templateMap, orders, fileUrls } = await getBatchDownloadContext(store, orderIds);
+
+  const orderEntries = await mapWithConcurrency(orders, 4, async (order) => {
+    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
+    return [entry].concat(await getOrderImageEntries(store, order, templateMap, folderName, fileUrls));
   });
   const entries = orderEntries.flat();
 
@@ -212,6 +415,26 @@ async function createBatchDownload(store, orderIds) {
     filename: 'orders-' + Date.now() + '.zip',
     content: await createZip(entries)
   };
+}
+
+async function streamBatchDownload(store, orderIds, res) {
+  const { templateMap, orders, fileUrls } = await getBatchDownloadContext(store, orderIds);
+  const filename = 'orders-' + Date.now() + '.zip';
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const archive = archiver('zip', { zlib: { level: 0 } });
+  archive.pipe(res);
+  await mapWithConcurrency(orders, 4, async (order) => {
+    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
+    archive.append(entry.content, { name: entry.name });
+    const imageEntries = await getOrderImageEntries(store, order, templateMap, folderName, fileUrls);
+    imageEntries.forEach((imageEntry) => archive.append(imageEntry.content, { name: imageEntry.name }));
+  });
+  await archive.finalize();
+  return { filename };
 }
 
 async function mapWithConcurrency(items, limit, mapper) {
@@ -228,4 +451,14 @@ async function mapWithConcurrency(items, limit, mapper) {
   return results;
 }
 
-module.exports = { listOrders, getOrderImagePreviews, createBatchDownload };
+module.exports = {
+  listOrders,
+  getOrderImagePreviews,
+  getAdminOrderImage,
+  createBatchDownload,
+  getBatchDownloadManifest,
+  streamBatchDownload,
+  markOrdersInProduction,
+  updateOrdersStatus,
+  deleteOrders
+};

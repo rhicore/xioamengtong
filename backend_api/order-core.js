@@ -26,6 +26,7 @@ const DEFAULT_TEMPLATES = [
 ];
 
 const DEFAULT_TEMPLATE = DEFAULT_TEMPLATES[2];
+const { detectPlatform } = require('./src/platform');
 
 function normalizeOrderId(value) {
   const orderId = String(value || '').trim();
@@ -61,19 +62,32 @@ function buildOrderFolderName(order) {
   return `订单-${safeFilePart(order && order.order_id) || 'unknown'}`;
 }
 
+function getDownloadNotebookName(template) {
+  const config = normalizeTemplate(template);
+  const knownNames = {
+    jiaotao: '胶套本',
+    chexian: '车线本',
+    huoye: '活页本'
+  };
+  if (knownNames[config.slug]) return knownNames[config.slug];
+  return safeFilePart(config.display_name)
+    .replace(/_?A5_?B5.*$/i, '')
+    .replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/^_+|_+$/g, '') || safeFilePart(config.slug);
+}
+
 function buildDownloadFileName(order, template, side, extension = '.jpg') {
   const config = normalizeTemplate(template);
+  const detectedPlatform = detectPlatform(order && order.order_id).platform;
   const parts = [
-    config.display_name || order.notebook_type,
-    order.platform,
-    order.shop,
-    order.order_id,
-    order.remark
+    order && order.platform || detectedPlatform,
+    getDownloadNotebookName(config),
+    order && order.order_id
   ].map(safeFilePart).filter(Boolean);
 
-  if (config.image_count > 1 && side) parts.push(side === 'front' ? '前' : '后');
+  if (side) parts.push(side === 'front' ? '前' : '后');
 
-  return `${parts.join('-')}${extension.startsWith('.') ? extension : `.${extension}`}`;
+  return `${parts.join('_')}${extension.startsWith('.') ? extension : `.${extension}`}`;
 }
 
 module.exports = {

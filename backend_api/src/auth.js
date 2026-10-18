@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 
 const SESSION_COOKIE = 'admin_session';
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 
 function normalizeUsername(value) {
   return String(value || '').trim().toLowerCase();
@@ -67,7 +68,12 @@ async function authenticateRequest(req, store, now) {
     return null;
   }
 
-  await store.touchSession(session._id, now);
+  // 不必每个只读请求都写一次数据库；一分钟内只读请求直接复用会话，
+  // 可以减少订单查询、图片预览和下载接口的额外写操作。
+  const lastSeenAt = new Date(session.last_seen_at).getTime();
+  if (!Number.isFinite(lastSeenAt) || now.getTime() - lastSeenAt >= SESSION_TOUCH_INTERVAL_MS) {
+    await store.touchSession(session._id, now);
+  }
   return { token, tokenHash, session, account };
 }
 

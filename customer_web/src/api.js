@@ -1,4 +1,8 @@
-const baseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+// 生产环境与静态网页使用同一个自定义域名，必须走同源 /api，
+// 不能把本地 .env.local 中的临时 CloudBase Run 域名打进生产包。
+const baseUrl = (import.meta.env.PROD
+  ? ''
+  : (import.meta.env.VITE_API_BASE_URL || '')).replace(/\/$/, '');
 
 async function readResponse(response) {
   let payload = {};

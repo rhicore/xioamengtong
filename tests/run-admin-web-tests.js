@@ -11,6 +11,13 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const adminDir = path.join(root, 'admin_web');
+const appSource = readFileSync(path.join(adminDir, 'src', 'App.jsx'), 'utf8');
+assert.match(appSource, /删除订单/);
+assert.match(appSource, /window\.confirm/);
+assert.match(appSource, /orderImageUrl\(order, 'front'\)/);
+assert.match(appSource, /_download_url/);
+assert.match(appSource, /辽ICP备2026024165号-1/);
+assert.match(appSource, /https:\/\/beian\.miit\.gov\.cn\//);
 
 const fixedNow = new Date('2026-09-22T15:00:00+08:00');
 assert.strictEqual(formatRelativeTime('2026-09-22T14:59:30+08:00', fixedNow), '刚刚');
