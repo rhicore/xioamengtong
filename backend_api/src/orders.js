@@ -35,8 +35,9 @@ function getTemplateOptions(templateMap) {
   return Object.values(templateMap)
     .map((template) => normalizeTemplate(template))
     .filter((template) => {
-      if (seen.has(template.slug)) return false;
-      seen.add(template.slug);
+      const optionKey = template.slug === 'chexian' ? 'jiaotao' : template.slug;
+      if (seen.has(optionKey)) return false;
+      seen.add(optionKey);
       return true;
     });
 }
@@ -58,7 +59,9 @@ async function listOrders(store, event = {}) {
     const matchedSlugs = templateOptions
       .filter((template) => template.slug.toLowerCase().includes(notebookKeyword)
         || template.display_name.toLowerCase().includes(notebookKeyword))
-      .map((template) => template.slug);
+      .flatMap((template) => template.slug === 'jiaotao'
+        ? ['jiaotao', 'chexian']
+        : [template.slug]);
     filters.notebook_type = matchedSlugs.length > 0
       ? store.db.command.in(matchedSlugs)
       : store.db.RegExp({ regexp: 'a^', options: 'i' });

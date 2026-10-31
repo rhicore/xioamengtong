@@ -434,10 +434,13 @@ export default function App() {
 
       {selectedTemplate && (
         <section className="customer-card upload-card">
-          <div className="section-heading">
-            <div>
+          <div className="section-heading upload-section-heading">
+            <div className="upload-heading-copy">
               <h2>上传图片</h2>
-              <p>{templateUploadHint(selectedTemplate)}</p>
+              <p>
+                {templateUploadHint(selectedTemplate)}
+                <span className="upload-guidance">请上传高清原图，不要上传拍照图、模糊图，传图就是印刷封面。如果无法改图请联系小店客服</span>
+              </p>
             </div>
           </div>
           <div className="image-grid">

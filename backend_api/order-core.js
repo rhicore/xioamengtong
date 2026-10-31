@@ -1,7 +1,7 @@
 const DEFAULT_TEMPLATES = [
   {
     slug: 'jiaotao',
-    display_name: '胶套本 A5/B5',
+    display_name: '胶套本',
     image_count: 2,
     aspect_ratio: '3:4',
     allow_blank: true,
@@ -9,7 +9,7 @@ const DEFAULT_TEMPLATES = [
   },
   {
     slug: 'chexian',
-    display_name: '车线本 A5/B5',
+    display_name: '胶套本',
     image_count: 2,
     aspect_ratio: '3:4',
     allow_blank: true,
@@ -17,7 +17,7 @@ const DEFAULT_TEMPLATES = [
   },
   {
     slug: 'huoye',
-    display_name: '活页本 A5/B5',
+    display_name: '活页本',
     image_count: 1,
     aspect_ratio: '3:4',
     allow_blank: false,
@@ -27,6 +27,11 @@ const DEFAULT_TEMPLATES = [
 
 const DEFAULT_TEMPLATE = DEFAULT_TEMPLATES[2];
 const { detectPlatform } = require('./src/platform');
+const TEMPLATE_DISPLAY_NAMES = {
+  jiaotao: '胶套本',
+  chexian: '胶套本',
+  huoye: '活页本'
+};
 
 function normalizeOrderId(value) {
   const orderId = String(value || '').trim();
@@ -37,9 +42,14 @@ function normalizeOrderId(value) {
 }
 
 function normalizeTemplate(template = {}) {
+  const slug = template.slug || DEFAULT_TEMPLATE.slug;
+  const displayName = TEMPLATE_DISPLAY_NAMES[slug]
+    || String(template.display_name || DEFAULT_TEMPLATE.display_name)
+      .replace(/\s*A5\s*\/\s*B5\s*/gi, ' ')
+      .trim();
   return {
-    slug: template.slug || DEFAULT_TEMPLATE.slug,
-    display_name: template.display_name || DEFAULT_TEMPLATE.display_name,
+    slug,
+    display_name: displayName,
     image_count: Number(template.image_count) || DEFAULT_TEMPLATE.image_count,
     aspect_ratio: template.aspect_ratio || DEFAULT_TEMPLATE.aspect_ratio,
     allow_blank: template.allow_blank !== false,
@@ -66,7 +76,7 @@ function getDownloadNotebookName(template) {
   const config = normalizeTemplate(template);
   const knownNames = {
     jiaotao: '胶套本',
-    chexian: '车线本',
+    chexian: '胶套本',
     huoye: '活页本'
   };
   if (knownNames[config.slug]) return knownNames[config.slug];

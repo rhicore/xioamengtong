@@ -249,12 +249,14 @@ async function run() {
   }, adminCookie);
   assert.strictEqual(result.response.status, 400);
 
-  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=%E8%BD%A6%E7%BA%BF', {}, adminCookie);
+  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=%E8%83%B6%E5%A5%97%E6%9C%AC', {}, adminCookie);
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.body.data.total, 2);
+  assert.strictEqual(result.body.data.items[0].display_name, '胶套本');
+  assert.deepStrictEqual(result.body.data.notebook_types.map((item) => item.display_name), ['胶套本', '活页本']);
   assert.match(result.body.data.items[0].front_url, /^https:\/\/mock\.local/);
 
-  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=%E8%BD%A6%E7%BA%BF&preview=0', {}, adminCookie);
+  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=%E8%83%B6%E5%A5%97%E6%9C%AC&preview=0', {}, adminCookie);
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.body.data.items[0].front_url, '');
 
@@ -271,7 +273,7 @@ async function run() {
   });
   assert.strictEqual(imageResult.status, 200);
   assert.strictEqual(imageResult.headers.get('content-type'), 'image/jpeg');
-  assert.match(decodeURIComponent(imageResult.headers.get('content-disposition') || ''), /拼多多_车线本_1_前\.jpg/);
+  assert.match(decodeURIComponent(imageResult.headers.get('content-disposition') || ''), /拼多多_胶套本_1_前\.jpg/);
   assert.strictEqual(Buffer.from(await imageResult.arrayBuffer()).toString(), 'mock image cloud://front-1.jpg');
 
   result = await request(baseUrl, '/api/v1/admin/orders/status', {
@@ -303,8 +305,8 @@ async function run() {
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.response.headers.get('content-type'), 'application/zip');
   assert.ok(result.body.includes(Buffer.from('订单-1/订单信息.json')));
-  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_车线本_1_前.jpg')));
-  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_车线本_1_后.jpg')));
+  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_胶套本_1_前.jpg')));
+  assert.ok(result.body.includes(Buffer.from('订单-1/拼多多_胶套本_1_后.jpg')));
 
   result = await request(baseUrl, '/api/v1/admin/batch-download?orderIds=1', {}, adminCookie);
   assert.strictEqual(result.response.status, 200);

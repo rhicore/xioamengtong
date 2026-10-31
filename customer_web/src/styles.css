@@ -48,6 +48,9 @@ input:focus { border-color: #111827; box-shadow: 0 0 0 3px rgba(17, 24, 39, .08)
 .type-card, .upload-card { padding: 22px; margin-bottom: 18px; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 17px; }
 .section-heading p { margin-bottom: 0; font-size: 12px; }
+.upload-section-heading { align-items: flex-start; }
+.upload-heading-copy { flex: 0 0 auto; }
+.upload-guidance { margin-left: 8px; color: #ef4444; font-size: inherit; font-weight: 400; }
 .saved-badge { padding: 5px 9px; border-radius: 999px; background: #ecfdf5; color: #15803d; font-size: 11px; white-space: nowrap; }
 .saved-badge.locked-badge { background: #fff7ed; color: #c2410c; }
 .locked-notice { margin: -5px 0 15px; padding: 10px 12px; border: 1px solid #fed7aa; border-radius: 10px; background: #fff7ed; color: #c2410c; font-size: 12px; line-height: 1.5; }
