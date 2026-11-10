@@ -2,8 +2,8 @@ const PLATFORM_RULES = [
   {
     platform: '拼多多',
     confidence: 'high',
-    pattern: /^\d{6}-\d{15}$/,
-    reason: '符合常见的日期段-流水号格式'
+    pattern: /^\d{6}[-_]\d{15}$/,
+    reason: '符合常见的日期段加流水号格式，兼容横线与下划线分隔'
   },
   {
     platform: '拼多多',
@@ -14,8 +14,8 @@ const PLATFORM_RULES = [
   {
     platform: '淘宝/天猫',
     confidence: 'low',
-    pattern: /^\d{18}$/,
-    reason: '符合淘宝/天猫常见的 18 位纯数字格式，但该格式并非官方唯一标识'
+    pattern: /^\d{18,19}$/,
+    reason: '符合淘宝/天猫的 18–19 位纯数字候选格式，仅按格式推测，未向平台核验'
   },
   {
     platform: '京东',

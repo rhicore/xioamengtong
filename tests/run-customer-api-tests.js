@@ -57,9 +57,52 @@ async function request(baseUrl, path, options = {}) {
 
 async function run() {
   const store = createMemoryStore();
+  const { detectPlatform: detectAdminPlatform } = await import('../admin_web/src/utils/platform.js');
+  for (const [id, expected] of [
+    ['5127850836413057008', '淘宝/天猫'],
+    ['123456789012345678', '淘宝/天猫'],
+    ['261110_664566535682609', '拼多多'],
+    ['261110-664566535682609', '拼多多'],
+    [' 261110_664566535682609 ', '拼多多'],
+    ['123456789012345', '京东'],
+    ['12345678901234567890', ''],
+    ['261110__664566535682609', ''],
+    ['261110_66456653568260', ''],
+    ['512785083641305700X', '']
+  ]) {
+    assert.equal(detectPlatform(id).platform, expected);
+    assert.equal(detectAdminPlatform(id), expected);
+  }
+  assert.equal(detectPlatform('5127850836413057008').confidence, 'low');
   const server = http.createServer(createApp({ store, env: 'development' }));
   await new Promise((resolve) => server.listen(0, resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  for (const [id, platform] of [['5127850836413057008', '淘宝/天猫'], ['261110_664566535682609', '拼多多']]) {
+    const endpoint = baseUrl + '/api/v1/customer/orders/' + id;
+    const queried = await (await fetch(endpoint)).json();
+    assert.equal(queried.data.platform, platform);
+    assert.equal(queried.data.order_id, id);
+    const submitted = await request(baseUrl, '/api/v1/customer/orders/' + id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groups: [{ id: 'platform-test', notebook_type: 'chexian', quantity: 1 }] })
+    });
+    assert.equal(submitted.response.status, 200);
+    assert.equal(submitted.body.data.platform, platform);
+    const saved = await store.getOrderByOrderId(id);
+    assert.equal(saved.order_id, id);
+    assert.equal(saved.platform, platform);
+    await store.updateOrder(saved._id, { platform: '' });
+    const existing = await (await fetch(endpoint + '?preview=0')).json();
+    assert.equal(existing.data.platform, platform);
+    const { listOrders } = require('../backend_api/src/orders');
+    const listed = await listOrders({ ...store, listOrders: async () => ({ items: [await store.getOrderByOrderId(id)], total: 1 }) }, { preview: '0' });
+    assert.equal(listed.items[0].platform_display, platform);
+    assert.equal(listed.items[0].order_id, id);
+    await store.updateOrder(saved._id, { platform: '人工确认的平台' });
+    assert.equal((await (await fetch(endpoint)).json()).data.platform, '人工确认的平台');
+  }
+  assert.equal(await store.getOrderByOrderId('261110-664566535682609'), null);
 
   let result = await request(baseUrl, '/api/v1/customer/orders/WEB-001');
   assert.equal(result.response.status, 200);
