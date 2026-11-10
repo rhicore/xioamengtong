@@ -63,6 +63,9 @@ node tests/local-demo.cjs
 # 仅在 Playwright 未安装到项目中时，指定已有模块位置
 $env:PLAYWRIGHT_MODULE = '你的 playwright 模块绝对路径'
 node tests/run-browser-flow-tests.cjs
+node tests/run-admin-refresh-tests.cjs
 ```
 
 使用独立临时数据验证：全屏裁切的四种窗口尺寸，触控缩放/旋转/拖动，第三根手指加入时画面稳定，裁切预览与 1704 × 2400 JPEG 输出一致，极长/极宽图片缩到最小并拖至边缘、旋转后逐像素检查没有补边，取消与重置，多组数量校验、新增/删除/重新加载、上传失败只重试未完成组、防止重复提交，以及管理端登录、分组预览和 ZIP 图片逐字节核对。测试后清理临时数据。触控测试为浏览器模拟，发布前仍需真机确认手感。
+
+`run-admin-refresh-tests.cjs` 专门复现管理端刷新后旧预览延迟返回的情况，确认旧的单组响应不会覆盖新的多组列表，并检查第二组预览及各组图片的实际下载内容。

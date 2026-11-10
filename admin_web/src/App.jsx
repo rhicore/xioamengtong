@@ -1,5 +1,5 @@
 // 后台订单列表：类型搜索、相对时间和批量下载入口集中在此页面。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   batchDownload,
   createAccount,
@@ -79,6 +79,7 @@ export default function App() {
   });
   const [selfPassword, setSelfPassword] = useState('');
   const [accountPasswordDrafts, setAccountPasswordDrafts] = useState({});
+  const ordersRequestRef = useRef(0);
   const dateRangeInvalid = Boolean(
     filters.created_from
     && filters.created_to
@@ -131,6 +132,7 @@ export default function App() {
       return;
     }
 
+    const requestId = ++ordersRequestRef.current;
     setLoading(true);
     setMessage('');
     try {
@@ -139,25 +141,27 @@ export default function App() {
         page,
         pageSize: pagination.pageSize
       }, { preview: false });
+      if (requestId !== ordersRequestRef.current) return;
       const nextOrders = result.items || [];
       setOrders(nextOrders);
       setNotebookTypes(result.notebook_types || []);
       setPagination((current) => ({ ...current, page, total: result.total || 0 }));
       setSelectedIds([]);
-      void loadOrderPreviews(nextOrders);
+      void loadOrderPreviews(nextOrders, requestId);
     } catch (error) {
-      setMessage(error.message || '订单加载失败');
+      if (requestId === ordersRequestRef.current) setMessage(error.message || '订单加载失败');
     } finally {
-      setLoading(false);
+      if (requestId === ordersRequestRef.current) setLoading(false);
     }
   }
 
-  async function loadOrderPreviews(pageOrders) {
+  async function loadOrderPreviews(pageOrders, requestId) {
     const orderIds = pageOrders.map((order) => order.order_id).filter(Boolean);
     if (orderIds.length === 0) return;
     try {
       const previews = await getOrderPreviews(orderIds);
-      setOrders((current) => current.map((order) => (
+      // 图片预览只能更新发起它的那次查询，避免旧响应删掉刚新增的组。
+      setOrders((current) => requestId !== ordersRequestRef.current ? current : current.map((order) => (
         previews[order.order_id]
           ? { ...order, ...previews[order.order_id] }
           : order
@@ -306,10 +310,12 @@ export default function App() {
   }
 
   async function handleLogout() {
+    ordersRequestRef.current += 1;
     try {
       await signOut();
     } finally {
       setLoggedIn(false);
+      setLoading(false);
       setOperator(null);
       setSelectedIds([]);
       setView('orders');
