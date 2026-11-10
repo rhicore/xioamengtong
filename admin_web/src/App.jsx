@@ -731,32 +731,36 @@ export default function App() {
       <section className="table-card">
         <table>
           <thead>
-              <tr>
-                <th><input type="checkbox" onChange={toggleAll} checked={orders.length > 0 && orders.every((order) => selectedIds.includes(order.order_id))} /></th>
-                <th>订单号</th>
-                <th>订单平台</th>
-                <th>本册类型</th>
-              <th>状态</th>
+            <tr>
+              <th><input type="checkbox" onChange={toggleAll} checked={orders.length > 0 && orders.every((order) => selectedIds.includes(order.order_id))} /></th>
+              <th>订单号</th>
+              <th>订单平台</th>
+              <th>本册类型</th>
+              <th>数量</th>
               <th>图片</th>
+              <th>状态</th>
               <th>上传/修改时间</th>
             </tr>
           </thead>
-          <tbody>
-              {orders.map((order) => (
-                <tr key={order.order_id}>
-                <td><input type="checkbox" checked={selectedIds.includes(order.order_id)} onChange={() => toggleOrder(order.order_id)} /></td>
-                  <td className="strong">{order.order_id}</td>
-                  <td>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
-                  <td>{order.groups?.length
-                    ? [...new Set(order.groups.map((group) => group.display_name || group.notebook_type))].join('、')
-                    : order.display_name || order.notebook_type}</td>
-                <td><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>
-                <td>
-                  {(order.groups?.length ? order.groups : [order]).map((group, index) => {
-                    const label = order.groups?.length ? `第 ${index + 1} 组 · ` : '';
-                    return (
-                      <div key={group.id || order.order_id}>
-                        {label && <div>{label}{group.display_name || group.notebook_type} · {group.quantity} 本</div>}
+          {orders.map((order) => {
+            const groups = order.groups?.length ? order.groups : [order];
+            return (
+              <tbody key={order.order_id} data-order-id={order.order_id}>
+                {groups.map((group, index) => {
+                  const first = index === 0;
+                  const label = order.groups?.length ? `第 ${index + 1} 组 · ` : '';
+                  return (
+                    <tr key={group.id || order.order_id} data-group-id={group.id}>
+                      {first && (
+                        <>
+                          <td rowSpan={groups.length}><input type="checkbox" checked={selectedIds.includes(order.order_id)} onChange={() => toggleOrder(order.order_id)} /></td>
+                          <td rowSpan={groups.length} className="strong">{order.order_id}</td>
+                          <td rowSpan={groups.length}>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
+                        </>
+                      )}
+                      <td>{group.display_name || group.notebook_type}</td>
+                      <td className="order-quantity-cell">{group.quantity || 1} 本</td>
+                      <td>
                         <div className="order-image-cell">
                           {['front', 'back'].map((side) => {
                             const url = orderImageUrl(group, side);
@@ -770,18 +774,21 @@ export default function App() {
                           {!orderImageUrl(group, 'front') && !orderImageUrl(group, 'back') &&
                             <span className="image-empty">{group.front_file_id || group.back_file_id ? '读取中…' : '无图片'}</span>}
                         </div>
-                      </div>
-                    );
-                  })}
-                </td>
-                <td className="time-cell">
-                  <div><span>上传</span>{formatRelativeTime(getOrderUploadTime(order))}</div>
-                  <div><span>修改</span>{formatRelativeTime(getOrderUpdatedTime(order))}</div>
-                </td>
-              </tr>
-            ))}
-            {orders.length === 0 && <tr><td colSpan="7" className="empty-cell">暂无订单</td></tr>}
-          </tbody>
+                      </td>
+                      {first && <td rowSpan={groups.length}><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>}
+                      {first && (
+                        <td rowSpan={groups.length} className="time-cell">
+                          <div><span>上传</span>{formatRelativeTime(getOrderUploadTime(order))}</div>
+                          <div><span>修改</span>{formatRelativeTime(getOrderUpdatedTime(order))}</div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            );
+          })}
+          {orders.length === 0 && <tbody><tr><td colSpan="8" className="empty-cell">暂无订单</td></tr></tbody>}
         </table>
         <div className="pagination">
           <span>共 {pagination.total} 条</span>

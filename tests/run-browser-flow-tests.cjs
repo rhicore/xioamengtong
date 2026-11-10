@@ -212,9 +212,12 @@ async function run() {
     await admin.getByRole('button', { name: '登录', exact: true }).click();
     await admin.getByPlaceholder('输入关键词或选择类型').fill('活页本');
     await admin.getByRole('button', { name: '查询', exact: true }).click();
-    const row = admin.locator('tbody tr').filter({ hasText: 'BROWSER-MULTI' });
-    await row.getByText('第 1 组 · 胶套本 · 3 本', { exact: true }).waitFor();
-    await row.getByText('第 2 组 · 活页本 · 4 本', { exact: true }).waitFor();
+    const row = admin.locator('tbody[data-order-id="BROWSER-MULTI"]');
+    await row.getByRole('cell', { name: '胶套本', exact: true }).waitFor();
+    await row.getByRole('cell', { name: '活页本', exact: true }).waitFor();
+    assert.deepEqual(await row.locator('.order-quantity-cell').allTextContents(), ['3 本', '4 本']);
+    assert.equal(await row.locator('tr').count(), 2);
+    assert.equal(await row.locator('input[type=checkbox]').count(), 1);
     await row.getByRole('button', { name: 'BROWSER-MULTI 第 2 组 · 前图', exact: true }).click();
     await admin.waitForFunction(() => document.querySelector('[role=dialog] img')?.naturalWidth === 1704);
     assert.match(await admin.getByRole('dialog').locator('img').getAttribute('src'), new RegExp('groupId=' + updated.groups[1].id));
