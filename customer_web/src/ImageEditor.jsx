@@ -1,150 +1,91 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { OUTPUT_WIDTH, OUTPUT_HEIGHT, initialTransform, clamp, getFitScale, getMinimumZoom, getCropFrame, normalizeAngle, constrainTransform, transformGesture, zoomAround, drawCroppedImage } from './cropGeometry.js';
 
-const VIEWPORT_WIDTH = 360;
-const VIEWPORT_HEIGHT = 480;
-const MIN_OUTPUT_WIDTH = 1800;
-const MIN_OUTPUT_HEIGHT = 2400;
-const MIN_SOURCE_CROP_WIDTH = 240;
-const MIN_SOURCE_CROP_HEIGHT = 320;
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function getFitScale(image) {
-  return Math.min(
-    VIEWPORT_WIDTH / image.naturalWidth,
-    VIEWPORT_HEIGHT / image.naturalHeight
-  );
-}
-
-function getMaxZoom(image) {
-  const fitScale = getFitScale(image);
-  const maxZoomX = VIEWPORT_WIDTH / (fitScale * MIN_SOURCE_CROP_WIDTH);
-  const maxZoomY = VIEWPORT_HEIGHT / (fitScale * MIN_SOURCE_CROP_HEIGHT);
-  return Math.max(1, Math.min(maxZoomX, maxZoomY));
-}
-
-function getDisplayTransform(image, zoom, offset) {
-  const fitScale = getFitScale(image);
-  const displayScale = fitScale * zoom;
-  const displayWidth = image.naturalWidth * displayScale;
-  const displayHeight = image.naturalHeight * displayScale;
-  return {
-    displayScale,
-    displayWidth,
-    displayHeight,
-    x: (VIEWPORT_WIDTH - displayWidth) / 2 + offset.x,
-    y: (VIEWPORT_HEIGHT - displayHeight) / 2 + offset.y
-  };
-}
-
-function getSourceCropSize(image, zoom) {
-  const displayScale = getFitScale(image) * zoom;
-  return {
-    width: VIEWPORT_WIDTH / displayScale,
-    height: VIEWPORT_HEIGHT / displayScale
-  };
-}
-
-function getOutputSize(image, zoom) {
-  const sourceCrop = getSourceCropSize(image, zoom);
-  return {
-    width: Math.max(MIN_OUTPUT_WIDTH, Math.round(sourceCrop.width)),
-    height: Math.max(MIN_OUTPUT_HEIGHT, Math.round(sourceCrop.height))
-  };
-}
-
-function clampOffset(image, zoom, offset) {
-  const transform = getDisplayTransform(image, zoom, offset);
-  const maxX = Math.max(0, (transform.displayWidth - VIEWPORT_WIDTH) / 2);
-  const maxY = Math.max(0, (transform.displayHeight - VIEWPORT_HEIGHT) / 2);
-  return {
-    x: clamp(offset.x, -maxX, maxX),
-    y: clamp(offset.y, -maxY, maxY)
-  };
-}
-
-function drawPreview(canvas, image, zoom, offset) {
+function createCroppedFile(image, transform, name) {
+  const canvas = document.createElement('canvas');
+  canvas.width = OUTPUT_WIDTH;
+  canvas.height = OUTPUT_HEIGHT;
   const context = canvas.getContext('2d');
-  if (!context) return;
-  const transform = getDisplayTransform(image, zoom, offset);
-  canvas.width = VIEWPORT_WIDTH;
-  canvas.height = VIEWPORT_HEIGHT;
-  context.clearRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
-  context.save();
-  context.beginPath();
-  context.rect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
-  context.clip();
-  context.drawImage(
-    image,
-    transform.x,
-    transform.y,
-    transform.displayWidth,
-    transform.displayHeight
-  );
-  context.restore();
-}
-
-function createCroppedFile(image, zoom, offset, name) {
-  const transform = getDisplayTransform(image, zoom, offset);
-  const outputSize = getOutputSize(image, zoom);
-  const output = document.createElement('canvas');
-  output.width = outputSize.width;
-  output.height = outputSize.height;
-  const context = output.getContext('2d');
-  if (!context) throw new Error('当前浏览器不支持图片编辑');
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, outputSize.width, outputSize.height);
-  const outputScaleX = outputSize.width / VIEWPORT_WIDTH;
-  const outputScaleY = outputSize.height / VIEWPORT_HEIGHT;
-  context.drawImage(
-    image,
-    transform.x * outputScaleX,
-    transform.y * outputScaleY,
-    transform.displayWidth * outputScaleX,
-    transform.displayHeight * outputScaleY
-  );
-
+  if (!context) return Promise.reject(new Error('当前浏览器不支持图片编辑'));
+  drawCroppedImage(context, image, transform);
   return new Promise((resolve, reject) => {
-    output.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('图片裁切失败，请更换图片后重试'));
-        return;
-      }
-      const safeName = (name || 'notebook-image').replace(/\.[^.]+$/, '');
-      const file = new File([blob], `${safeName}-cropped.jpg`, {
-        type: 'image/jpeg',
-        lastModified: Date.now()
-      });
+    canvas.toBlob((blob) => {
+      if (!blob) { reject(new Error('图片裁切失败，请更换图片后重试')); return; }
+      const file = new File([blob], `${(name || 'notebook-image').replace(/\.[^.]+$/, '')}-cropped.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
       resolve({ file, previewUrl: URL.createObjectURL(blob) });
     }, 'image/jpeg', 0.92);
   });
 }
 
 export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, onApply, onClear }) {
-  const canvasRef = useRef(null);
+  const dialogRef = useRef(null);
+  const stageRef = useRef(null);
   const imageRef = useRef(null);
-  const dragRef = useRef(null);
-  const pointerMapRef = useRef(new Map());
-  const pinchRef = useRef(null);
-  const zoomRef = useRef(1);
-  const offsetRef = useRef({ x: 0, y: 0 });
-  const ownedSourceUrls = useRef(new Set());
-  const [activeSourceUrl, setActiveSourceUrl] = useState(sourceUrl);
-  const [activeSourceName, setActiveSourceName] = useState(sourceName);
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [maxZoom, setMaxZoom] = useState(1);
+  const pointersRef = useRef(new Map());
+  const gestureRef = useRef(null);
+  const transformRef = useRef(initialTransform());
+  const paintRef = useRef(null);
+  const applyingRef = useRef(false);
+  const sourceUrlsRef = useRef(new Set());
+  const frameRef = useRef(null);
+  const [source, setSource] = useState({ url: sourceUrl, name: sourceName });
+  const [imageSize, setImageSize] = useState(null);
+  const [stageSize, setStageSize] = useState({ width: 1, height: 1 });
+  const [transform, setTransform] = useState(initialTransform);
   const [loaded, setLoaded] = useState(false);
+  const [interacting, setInteracting] = useState(false);
   const [error, setError] = useState('');
   const [applying, setApplying] = useState(false);
+  const maxZoom = imageSize ? Math.max(4, Math.min(16, OUTPUT_WIDTH / (getFitScale(imageSize.width, imageSize.height) * 240))) : 4;
+  const minZoom = imageSize ? getMinimumZoom(imageSize.width, imageSize.height, transform.rotation) : 1;
+  const frame = getCropFrame(stageSize.width, stageSize.height);
+  frameRef.current = frame;
 
-  useEffect(() => () => {
-    ownedSourceUrls.current.forEach((url) => URL.revokeObjectURL(url));
-    ownedSourceUrls.current.clear();
+  function setView(next, animateFrame = false) {
+    const image = imageRef.current;
+    const bounded = image ? constrainTransform(next, image.naturalWidth, image.naturalHeight) : next;
+    transformRef.current = bounded;
+    if (paintRef.current !== null) cancelAnimationFrame(paintRef.current);
+    if (animateFrame) paintRef.current = requestAnimationFrame(() => { paintRef.current = null; setTransform(transformRef.current); });
+    else { paintRef.current = null; setTransform(bounded); }
+  }
+
+  function stopGesture() {
+    pointersRef.current.clear();
+    gestureRef.current = null;
+    setInteracting(false);
+  }
+
+  useLayoutEffect(() => {
+    const element = stageRef.current;
+    const update = () => {
+      setStageSize({ width: element.clientWidth, height: element.clientHeight });
+      stopGesture();
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const previous = { position: body.style.position, top: body.style.top, width: body.style.width, overflow: body.style.overflow };
+    Object.assign(body.style, { position: 'fixed', top: `-${scrollY}px`, width: '100%', overflow: 'hidden' });
+    dialogRef.current.focus();
+    const onBlur = () => stopGesture();
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      Object.assign(body.style, previous);
+      window.scrollTo({ top: scrollY, behavior: 'instant' });
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      if (paintRef.current !== null) cancelAnimationFrame(paintRef.current);
+      sourceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    };
   }, []);
 
   useEffect(() => {
@@ -153,238 +94,143 @@ export default function ImageEditor({ sourceUrl, sourceName, title, onCancel, on
     setLoaded(false);
     image.onload = () => {
       imageRef.current = image;
-      setMaxZoom(getMaxZoom(image));
+      setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+      setView(initialTransform());
       setLoaded(true);
       setError('');
     };
-    image.onerror = () => {
-      setLoaded(false);
-      setError('图片读取失败，请重新选择图片');
+    image.onerror = () => { imageRef.current = null; setError('图片读取失败，请更换图片后重试'); };
+    image.src = source.url;
+    return () => { image.onload = null; image.onerror = null; imageRef.current = null; };
+  }, [source.url]);
+
+  function pointOnCrop(clientPoint) {
+    const rect = stageRef.current.getBoundingClientRect();
+    const crop = frameRef.current;
+    return {
+      x: (clientPoint.x - rect.left - crop.x - crop.width / 2) / crop.scale,
+      y: (clientPoint.y - rect.top - crop.y - crop.height / 2) / crop.scale
     };
-    image.src = activeSourceUrl;
-    return () => {
-      image.onload = null;
-      image.onerror = null;
-      imageRef.current = null;
-    };
-  }, [activeSourceUrl]);
-
-  useEffect(() => {
-    if (loaded && imageRef.current && canvasRef.current) {
-      drawPreview(canvasRef.current, imageRef.current, zoom, offset);
-    }
-  }, [activeSourceUrl, loaded, zoom, offset]);
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === 'Escape' && !applying) onCancel();
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [applying, onCancel]);
-
-  function updateZoom(value) {
-    const nextZoom = clamp(Number(value), 1, maxZoom);
-    const image = imageRef.current;
-    zoomRef.current = nextZoom;
-    setZoom(nextZoom);
-    if (image) {
-      const nextOffset = clampOffset(image, nextZoom, offsetRef.current);
-      offsetRef.current = nextOffset;
-      setOffset(nextOffset);
-    }
   }
 
-  function distanceBetween(first, second) {
-    return Math.hypot(second.x - first.x, second.y - first.y);
-  }
-
-  function midpointBetween(first, second) {
-    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+  function rebaseGesture() {
+    const entries = [...pointersRef.current.entries()].slice(0, 2);
+    gestureRef.current = entries.length ? { ids: entries.map(([id]) => id), points: entries.map(([, point]) => pointOnCrop(point)), base: { ...transformRef.current } } : null;
+    setInteracting(entries.length > 0);
   }
 
   function handlePointerDown(event) {
-    if (!loaded || applying) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = [...pointerMapRef.current.values()];
-    if (pointers.length >= 2) {
-      const [first, second] = pointers;
-      pinchRef.current = {
-        startDistance: Math.max(distanceBetween(first, second), 1),
-        startMidpoint: midpointBetween(first, second),
-        startZoom: zoomRef.current,
-        startOffset: offsetRef.current
-      };
-      dragRef.current = null;
-      return;
-    }
-    dragRef.current = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      offset: offsetRef.current
-    };
+    if (!loaded || applyingRef.current || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    rebaseGesture();
   }
 
   function handlePointerMove(event) {
-    const pointer = pointerMapRef.current.get(event.pointerId);
-    if (!pointer || !imageRef.current) return;
-    pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = [...pointerMapRef.current.values()];
-    if (pointers.length >= 2) {
-      const [first, second] = pointers;
-      const pinch = pinchRef.current;
-      if (!pinch) return;
-      const canvasWidth = canvasRef.current?.getBoundingClientRect().width || VIEWPORT_WIDTH;
-      const canvasScale = VIEWPORT_WIDTH / canvasWidth;
-      const nextZoom = clamp(
-        pinch.startZoom * distanceBetween(first, second) / pinch.startDistance,
-        1,
-        maxZoom
-      );
-      const midpoint = midpointBetween(first, second);
-      const nextOffset = clampOffset(imageRef.current, nextZoom, {
-        x: pinch.startOffset.x + (midpoint.x - pinch.startMidpoint.x) * canvasScale,
-        y: pinch.startOffset.y + (midpoint.y - pinch.startMidpoint.y) * canvasScale
-      });
-      zoomRef.current = nextZoom;
-      offsetRef.current = nextOffset;
-      setZoom(nextZoom);
-      setOffset(nextOffset);
-      return;
-    }
-    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return;
-    const next = {
-      x: dragRef.current.offset.x + event.clientX - dragRef.current.x,
-      y: dragRef.current.offset.y + event.clientY - dragRef.current.y
-    };
-    const nextOffset = clampOffset(imageRef.current, zoomRef.current, next);
-    offsetRef.current = nextOffset;
-    setOffset(nextOffset);
+    if (!pointersRef.current.has(event.pointerId) || !gestureRef.current || applyingRef.current) return;
+    event.preventDefault();
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const gesture = gestureRef.current;
+    const points = gesture.ids.map((id) => pointOnCrop(pointersRef.current.get(id)));
+    setView(transformGesture(gesture.base, gesture.points, points, maxZoom, imageSize), true);
   }
 
   function handlePointerEnd(event) {
-    pointerMapRef.current.delete(event.pointerId);
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    if (pointerMapRef.current.size < 2) pinchRef.current = null;
-    if (pointerMapRef.current.size === 1) {
-      const [pointerId, pointer] = pointerMapRef.current.entries().next().value;
-      dragRef.current = {
-        pointerId,
-        x: pointer.x,
-        y: pointer.y,
-        offset: offsetRef.current
-      };
-    } else {
-      dragRef.current = null;
-    }
+    if (!pointersRef.current.delete(event.pointerId)) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    rebaseGesture();
   }
 
-  function resetPosition() {
-    zoomRef.current = 1;
-    offsetRef.current = { x: 0, y: 0 };
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
+  function changeZoom(value, point) {
+    if (!loaded || applyingRef.current) return;
+    stopGesture();
+    const image = imageRef.current;
+    const minimum = getMinimumZoom(image.naturalWidth, image.naturalHeight, transformRef.current.rotation);
+    setView(zoomAround(transformRef.current, clamp(Number(value), minimum, maxZoom), point));
   }
 
-  function resetPointers() {
-    pointerMapRef.current.clear();
-    pinchRef.current = null;
-    dragRef.current = null;
+  function handleWheel(event) {
+    if (!loaded || applyingRef.current) return;
+    event.preventDefault();
+    changeZoom(transformRef.current.zoom * Math.exp(-event.deltaY * 0.0015), pointOnCrop({ x: event.clientX, y: event.clientY }));
   }
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    stage.addEventListener('wheel', handleWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', handleWheel);
+  }, [loaded, maxZoom]);
+
+  function rotateBy90() {
+    stopGesture();
+    setView({ ...transformRef.current, rotation: normalizeAngle(transformRef.current.rotation + 90) });
+  }
+
+  function resetPosition() { stopGesture(); setView(initialTransform()); }
 
   async function apply() {
-    if (!imageRef.current || applying) return;
+    if (!imageRef.current || applyingRef.current) return;
+    applyingRef.current = true;
     setApplying(true);
+    stopGesture();
     setError('');
-    try {
-      const result = await createCroppedFile(imageRef.current, zoom, offset, activeSourceName);
-      onApply(result);
-    } catch (applyError) {
-      setError(applyError.message || '图片裁切失败，请重试');
-      setApplying(false);
-    }
+    try { onApply(await createCroppedFile(imageRef.current, transformRef.current, source.name)); }
+    catch (failure) { setError(failure.message || '图片裁切失败，请重试'); applyingRef.current = false; setApplying(false); }
   }
 
   function replaceImage(event) {
-    const file = event.target.files && event.target.files[0];
+    const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError('请选择图片文件');
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      setError('图片不能超过 20MB');
-      return;
-    }
-    ownedSourceUrls.current.forEach((url) => URL.revokeObjectURL(url));
-    ownedSourceUrls.current.clear();
-    const nextUrl = URL.createObjectURL(file);
-    ownedSourceUrls.current.add(nextUrl);
-    setActiveSourceUrl(nextUrl);
-    setActiveSourceName(file.name);
-    resetPosition();
-    resetPointers();
-    setError('');
+    if (!file || applyingRef.current) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError('请选择 JPG、PNG 或 WebP 图片'); return; }
+    if (file.size > 20 * 1024 * 1024) { setError('图片不能超过 20MB'); return; }
+    stopGesture();
+    const url = URL.createObjectURL(file);
+    sourceUrlsRef.current.add(url);
+    setSource({ url, name: file.name });
   }
 
-  return (
-    <div className="editor-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !applying) onCancel();
-    }}>
-      <section className="image-editor" role="dialog" aria-modal="true" aria-label="编辑图片">
-        <div className="editor-header">
-          <div>
-            <p className="eyebrow">IMAGE EDITOR</p>
-            <h2>{title}裁切</h2>
+  function handleKeyDown(event) {
+    if (event.key === 'Escape') { event.preventDefault(); if (!applyingRef.current) onCancel(); }
+    if (event.key === 'Tab') {
+      const focusable = [...dialogRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled)')].filter((element) => element.getClientRects().length);
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { event.preventDefault(); first?.focus(); }
+    }
+  }
+
+  const fit = imageSize ? getFitScale(imageSize.width, imageSize.height) * frame.scale : 1;
+  const frameStyle = { left: frame.x, top: frame.y, width: frame.width, height: frame.height };
+  return createPortal(
+    <div className="editor-backdrop">
+      <section ref={dialogRef} tabIndex={-1} className="image-editor" role="dialog" aria-modal="true" aria-label="编辑图片" aria-busy={applying} onKeyDown={handleKeyDown}>
+        <header className="editor-header">
+          <button className="editor-cancel" onClick={onCancel} disabled={applying}>取消</button>
+          <div><h2>{title}裁切</h2><p>1704 × 2400</p></div>
+          <button className="editor-done" onClick={apply} disabled={!loaded || applying}>{applying ? '处理中…' : '完成'}</button>
+        </header>
+        <div ref={stageRef} className={`editor-stage${interacting ? ' interacting' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd} onLostPointerCapture={handlePointerEnd}>
+          <div className="editor-print-paper" style={frameStyle} />
+          {loaded && imageSize && <img className="editor-media" src={source.url} alt="待裁切图片" draggable={false} style={{ left: frame.x + frame.width / 2 + transform.x * frame.scale, top: frame.y + frame.height / 2 + transform.y * frame.scale, width: imageSize.width * fit, height: imageSize.height * fit, transform: `translate(-50%, -50%) rotate(${transform.rotation}deg) scale(${transform.zoom})` }} />}
+          <div className="editor-crop-frame" style={frameStyle}><div className="editor-crop-grid" /></div>
+          {!loaded && <div className="editor-loading">{error ? '图片暂时无法读取' : '正在读取图片…'}</div>}
+        </div>
+        <footer className="editor-toolbar">
+          <p className="editor-tip">单指移动 · 双指缩放、旋转</p>
+          <div className="editor-controls"><span>缩放</span><input aria-label="图片缩放" type="range" min={minZoom} max={maxZoom} step="0.01" value={transform.zoom} disabled={!loaded || applying} onChange={(event) => changeZoom(event.target.value)} /><output>{Math.round(transform.zoom * 100)}%</output></div>
+          <div className="editor-actions">
+            <button className="reset-button" onClick={rotateBy90} disabled={!loaded || applying}>旋转 90°</button>
+            <button className="reset-button" onClick={resetPosition} disabled={!loaded || applying}>重置</button>
+            <label className={`clear-button editor-replace-action${applying ? ' disabled' : ''}`}>更换图片<input aria-label="更换裁切图片" type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceImage} disabled={applying} /></label>
+            {onClear && <button className="editor-clear-button" onClick={onClear} disabled={applying}>清除图片</button>}
           </div>
-          <button className="editor-close" onClick={onCancel} disabled={applying} aria-label="关闭">×</button>
-        </div>
-        <p className="editor-tip">拖动图片调整位置，使用下方滑块缩放，框内区域就是最终上传内容。</p>
-        <p className="editor-warning">裁切会有 3–5mm 误差，重要文字图案请远离照片四周边缘。</p>
-        <div className="editor-canvas-wrap">
-          {loaded ? (
-            <canvas
-              ref={canvasRef}
-              className="editor-canvas"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerEnd}
-              onPointerCancel={handlePointerEnd}
-            />
-          ) : (
-            <div className="editor-loading">正在读取图片...</div>
-          )}
-        </div>
-        <div className="editor-controls">
-          <span>缩小</span>
-          <input
-            aria-label="图片缩放"
-            type="range"
-            min="1"
-            max={maxZoom}
-            step="0.01"
-            value={zoom}
-            onChange={(event) => updateZoom(event.target.value)}
-            disabled={!loaded || applying}
-          />
-          <span>放大</span>
-          <button className="reset-button" onClick={resetPosition} disabled={!loaded || applying}>重置</button>
-        </div>
-        {error && <p className="error-box editor-error">{error}</p>}
-        <div className="editor-actions">
-          {onClear && <button className="editor-clear-button" onClick={onClear} disabled={applying}>清除图片</button>}
-          <label className="clear-button editor-replace-action">
-            更换图片
-            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceImage} disabled={applying} />
-          </label>
-          <button className="primary-button" onClick={apply} disabled={!loaded || applying}>
-            {applying ? '处理中...' : '使用裁切结果'}
-          </button>
-        </div>
+          <p className="editor-warning">裁切有 3–5mm 误差，重要文字图案请远离四周边缘。</p>
+          {error && <p className="error-box editor-error" role="alert">{error}</p>}
+        </footer>
       </section>
-    </div>
+    </div>, document.body
   );
 }

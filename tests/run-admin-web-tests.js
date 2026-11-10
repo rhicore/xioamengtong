@@ -14,7 +14,7 @@ const adminDir = path.join(root, 'admin_web');
 const appSource = readFileSync(path.join(adminDir, 'src', 'App.jsx'), 'utf8');
 assert.match(appSource, /删除订单/);
 assert.match(appSource, /window\.confirm/);
-assert.match(appSource, /orderImageUrl\(order, 'front'\)/);
+assert.match(appSource, /orderImageUrl\(group, side\)/);
 assert.match(appSource, /_download_url/);
 assert.match(appSource, /辽ICP备2026024165号-1/);
 assert.match(appSource, /https:\/\/beian\.miit\.gov\.cn\//);

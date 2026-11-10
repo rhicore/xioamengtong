@@ -1,3 +1,4 @@
+const { randomUUID } = require('node:crypto');
 const {
   getDefaultTemplates,
   normalizeOrderId,
@@ -100,6 +101,7 @@ function toPublicOrder(order, template, extra = {}) {
     status_display: ORDER_STATUS_LABELS[order.status] || '用户已上传',
     front_file_id: order.front_file_id || '',
     back_file_id: order.back_file_id || '',
+    groups: order.groups || [],
     created_at: order.created_at || null,
     submitted_at: order.submitted_at || null,
     updated_at: order.updated_at || null,
@@ -137,7 +139,9 @@ async function getCustomerOrder(store, value, options = {}) {
   let urlMap = {};
   if (options.includePreview !== false) {
     try {
-      urlMap = await store.getTempFileURLMap([order.front_file_id, order.back_file_id]);
+      urlMap = await store.getTempFileURLMap([order, ...(order.groups || [])].flatMap(
+        (group) => [group.front_file_id, group.back_file_id]
+      ));
     } catch (error) {
       // 订单信息仍然可以展示，图片 URL 失败时由前端提示用户重新上传。
       console.warn('customer image preview url unavailable', error.message || error);
@@ -147,15 +151,24 @@ async function getCustomerOrder(store, value, options = {}) {
   return toPublicOrder(order, template, {
     front_url: urlMap[order.front_file_id] || '',
     back_url: urlMap[order.back_file_id] || '',
+    groups: (order.groups || []).map((group) => ({
+      ...group,
+      front_url: urlMap[group.front_file_id] || '',
+      back_url: urlMap[group.back_file_id] || ''
+    })),
     templates
   });
 }
 
-async function getCustomerImage(store, value, side) {
+function imageGroup(order, groupId) {
+  return groupId ? order?.groups?.find((group) => group.id === groupId) : order;
+}
+
+async function getCustomerImage(store, value, side, groupId) {
   const orderId = normalizeCustomerOrderId(value);
   if (!['front', 'back'].includes(side)) throw customerError(404, '图片不存在');
-  const order = await store.getOrderByOrderId(orderId);
-  const fileId = order && order[side + '_file_id'];
+  const group = imageGroup(await store.getOrderByOrderId(orderId), groupId);
+  const fileId = group && group[side + '_file_id'];
   if (!fileId) throw customerError(404, '图片不存在');
 
   try {
@@ -167,9 +180,9 @@ async function getCustomerImage(store, value, side) {
   }
 }
 
-async function getCustomerImageUrls(store, value) {
+async function getCustomerImageUrls(store, value, groupId) {
   const orderId = normalizeCustomerOrderId(value);
-  const order = await store.getOrderByOrderId(orderId);
+  const order = imageGroup(await store.getOrderByOrderId(orderId), groupId);
   if (!order) return { order_id: orderId, front_url: '', back_url: '' };
 
   let urlMap = {};
@@ -214,7 +227,7 @@ async function uploadCustomerImages(store, value, files = {}, options = {}) {
     const file = Array.isArray(files[side]) ? files[side][0] : null;
     if (!file) return null;
     validateImage(file);
-    const cloudPath = `orders/${orderPath}/${Date.now()}-${side}${extensionFor(file)}`;
+    const cloudPath = `orders/${orderPath}/${randomUUID()}-${side}${extensionFor(file)}`;
     const result = await store.uploadFile(cloudPath, file.buffer);
     return { side, fileId: result.fileID };
   }));
@@ -243,6 +256,16 @@ async function uploadCustomerImages(store, value, files = {}, options = {}) {
   };
 }
 
+function validateGroup(body, templates, orderId) {
+  const template = findTemplate(templates, String(body?.notebook_type || body?.notebookType || '').trim());
+  if (!template) throw customerError(400, '请选择有效的本子类型');
+  const frontFileId = validateOrderFileId(normalizeFileId(body.front_file_id ?? body.frontFileId), orderId);
+  const backFileId = validateOrderFileId(normalizeFileId(body.back_file_id ?? body.backFileId), orderId);
+  if (!template.allow_blank && !frontFileId) throw customerError(400, '活页本请上传封面图片');
+  if (template.image_count === 1 && backFileId) throw customerError(400, '当前本子类型不需要后封底图片');
+  return { notebook_type: template.slug, front_file_id: frontFileId, back_file_id: backFileId };
+}
+
 async function saveCustomerOrder(store, value, body = {}) {
   const orderId = normalizeCustomerOrderId(value);
   const [templateMap, existing] = await Promise.all([
@@ -253,23 +276,24 @@ async function saveCustomerOrder(store, value, body = {}) {
     throw customerError(409, '订单已进入制作流程，暂不支持修改图片');
   }
   const templates = templateOptions(templateMap);
-  const template = findTemplate(templates, String(body.notebook_type || body.notebookType || '').trim());
-  if (!template) throw customerError(400, '请选择有效的本子类型');
-
-  const frontFileId = validateOrderFileId(
-    normalizeFileId(body.front_file_id ?? body.frontFileId),
-    orderId
-  );
-  const backFileId = validateOrderFileId(
-    normalizeFileId(body.back_file_id ?? body.backFileId),
-    orderId
-  );
-  if (!template.allow_blank && !frontFileId) {
-    throw customerError(400, '活页本请上传封面图片');
+  let groups;
+  if (body.groups !== undefined) {
+    if (!Array.isArray(body.groups) || !body.groups.length) throw customerError(400, '请至少添加一组图片');
+    const ids = new Set();
+    groups = body.groups.map((group) => {
+      const id = group?.id;
+      if (typeof id !== 'string' || !/^[\w-]{1,64}$/.test(id) || ids.has(id)) {
+        throw customerError(400, '图片组编号无效或重复');
+      }
+      ids.add(id);
+      const quantity = group.quantity;
+      if (!Number.isSafeInteger(quantity) || quantity < 1) throw customerError(400, '本组数量必须是大于 0 的整数');
+      return { id, quantity, ...validateGroup(group, templates, orderId) };
+    });
   }
-  if (template.image_count === 1 && backFileId) {
-    throw customerError(400, '当前本子类型不需要后封底图片');
-  }
+  const first = groups?.[0] || validateGroup(body, templates, orderId);
+  const template = findTemplate(templates, first.notebook_type);
+  const { front_file_id: frontFileId, back_file_id: backFileId } = first;
 
   const now = new Date();
   const updateData = {
@@ -281,12 +305,19 @@ async function saveCustomerOrder(store, value, body = {}) {
   };
   const detectedPlatform = detectPlatform(orderId);
   if (!existing || !existing.platform) updateData.platform = detectedPlatform.platform;
-  if (Object.prototype.hasOwnProperty.call(body, 'front_file_id')
-    || Object.prototype.hasOwnProperty.call(body, 'frontFileId')) {
+  if (groups) {
+    updateData.groups = groups;
+    updateData.quantity = groups.reduce((total, group) => total + group.quantity, 0);
+    if (!Number.isSafeInteger(updateData.quantity)) throw customerError(400, '总数量超出范围');
+    updateData.front_file_id = frontFileId;
+    updateData.back_file_id = backFileId;
+  }
+  if (!groups && (Object.prototype.hasOwnProperty.call(body, 'front_file_id')
+    || Object.prototype.hasOwnProperty.call(body, 'frontFileId'))) {
     updateData.front_file_id = frontFileId;
   }
-  if (Object.prototype.hasOwnProperty.call(body, 'back_file_id')
-    || Object.prototype.hasOwnProperty.call(body, 'backFileId')) {
+  if (!groups && (Object.prototype.hasOwnProperty.call(body, 'back_file_id')
+    || Object.prototype.hasOwnProperty.call(body, 'backFileId'))) {
     updateData.back_file_id = backFileId;
   }
 
@@ -306,7 +337,8 @@ async function saveCustomerOrder(store, value, body = {}) {
       created_at: now,
       updated_at: now,
       submitted_at: now,
-      source: 'web'
+      source: 'web',
+      ...updateData
     });
 
   return toPublicOrder(order || { order_id: orderId, ...updateData }, template);

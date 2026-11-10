@@ -140,7 +140,7 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
 
   async function customerImageDownloadHandler(req, res, next) {
     try {
-      const result = await getCustomerImage(store, req.params.orderId, req.params.side);
+      const result = await getCustomerImage(store, req.params.orderId, req.params.side, req.query.groupId);
       res.setHeader('Content-Type', result.contentType);
       res.setHeader('Cache-Control', 'private, max-age=300');
       return res.send(result.fileContent);
@@ -151,7 +151,7 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
 
   async function customerImageUrlsHandler(req, res, next) {
     try {
-      return res.json(success(await getCustomerImageUrls(store, req.params.orderId)));
+      return res.json(success(await getCustomerImageUrls(store, req.params.orderId, req.query.groupId)));
     } catch (error) {
       return next(error);
     }
@@ -241,7 +241,7 @@ function createApp({ store, env = 'development', now = () => new Date() }) {
   app.get('/api/v1/admin/orders/:orderId/images/:side', async (req, res, next) => {
     try {
       await requireAuth(req);
-      const result = await getAdminOrderImage(store, req.params.orderId, req.params.side);
+      const result = await getAdminOrderImage(store, req.params.orderId, req.params.side, req.query.groupId);
       res.setHeader('Content-Type', result.contentType);
       res.setHeader(
         'Content-Disposition',

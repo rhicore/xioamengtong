@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { getImageBlobUrl, getImagePreviewUrls, getOrder, submitOrder, uploadImages } from './api.js';
-import notebookOneIcon from './assets/notebook-one-icon.png';
-import notebookTwoIcon from './assets/notebook-two-icon.png';
+import notebookOneIcon from './assets/notebook-one-icon.png?inline';
+import notebookTwoIcon from './assets/notebook-two-icon.png?inline';
 
 const ImageEditor = lazy(() => import('./ImageEditor.jsx'));
 
@@ -80,19 +80,38 @@ function imageState(url, fileId) {
   };
 }
 
+function createImageGroup(data = {}) {
+  return {
+    id: data.id || crypto.randomUUID(),
+    savedGroupId: data.id,
+    notebookType: data.notebook_type,
+    selectedType: customerTypeSlug(data.notebook_type || ''),
+    quantity: Number(data.quantity) || 1,
+    images: {
+      front: imageState(data.front_url, data.front_file_id),
+      back: imageState(data.back_url, data.back_file_id)
+    }
+  };
+}
+
 export default function App() {
   const [step, setStep] = useState('order');
   const [orderId, setOrderId] = useState('');
   const [order, setOrder] = useState(null);
   const [templates, setTemplates] = useState([]);
-  const [selectedType, setSelectedType] = useState('');
-  const [images, setImages] = useState({ front: EMPTY_IMAGE, back: EMPTY_IMAGE });
+  const [groups, setGroups] = useState(() => [createImageGroup()]);
+  const [activeGroupId, setActiveGroupId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [editor, setEditor] = useState(null);
   const [editingSide, setEditingSide] = useState('');
+  const submittingRef = useRef(false);
 
+  const activeGroup = groups.find((group) => group.id === activeGroupId) || groups[0];
+  const selectedType = activeGroup.selectedType;
+  const images = activeGroup.images;
+  const totalQuantity = groups.reduce((total, group) => total + (Number.isSafeInteger(Number(group.quantity)) && Number(group.quantity) > 0 ? Number(group.quantity) : 0), 0);
   const customerTemplates = customerTemplateOptions(templates);
   const selectedTemplate = customerTemplates.find((item) => item.slug === selectedType) || null;
   const customerLocked = isCustomerLockedStatus(order?.status);
@@ -107,11 +126,43 @@ export default function App() {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-  }, [step]);
+  }, [step, activeGroupId]);
 
-  async function loadExistingImages(existingOrderId, existingImages) {
+  function setImages(update, groupId = activeGroup.id) {
+    setGroups((current) => current.map((group) => group.id === groupId ? {
+      ...group,
+      images: typeof update === 'function' ? update(group.images) : update
+    } : group));
+  }
+
+  function setSelectedType(slug) {
+    setGroups((current) => current.map((group) => group.id === activeGroup.id ? { ...group, selectedType: slug } : group));
+  }
+
+  function addGroup() {
+    if (customerLocked || loading || editingSide) return;
+    const group = createImageGroup();
+    setGroups((current) => [...current, group]);
+    setActiveGroupId(group.id);
+    setError('');
+  }
+
+  function removeGroup() {
+    if (customerLocked || loading || editingSide || groups.length === 1) return;
+    const number = groups.findIndex((group) => group.id === activeGroup.id) + 1;
+    if (!window.confirm(`确定删除第 ${number} 组图片？其他组不会改变。`)) return;
+    Object.values(images).forEach((image) => {
+      if (image.url.startsWith('blob:')) URL.revokeObjectURL(image.url);
+    });
+    const remaining = groups.filter((group) => group.id !== activeGroup.id);
+    setGroups(remaining);
+    setActiveGroupId(remaining[Math.min(number - 1, remaining.length - 1)].id);
+    setError('');
+  }
+
+  async function loadExistingImages(existingOrderId, { images: existingImages, id: groupId, savedGroupId }) {
     try {
-      const previewUrls = await getImagePreviewUrls(existingOrderId);
+      const previewUrls = await getImagePreviewUrls(existingOrderId, savedGroupId);
       const previewSides = ['front', 'back'].filter((side) => previewUrls[side + '_url']);
       previewSides.forEach((side) => {
         const url = previewUrls[side + '_url'];
@@ -119,22 +170,22 @@ export default function App() {
           const image = current[side];
           if (image.file || image.fileId !== existingImages[side].fileId || image.removed) return current;
           return { ...current, [side]: { ...image, url, loading: false } };
-        });
+        }, groupId);
       });
 
       const missingSides = ['front', 'back'].filter((side) => (
         existingImages[side].fileId && !previewUrls[side + '_url']
       ));
-      await Promise.all(missingSides.map((side) => loadImageBlobFallback(existingOrderId, side, existingImages)));
+      await Promise.all(missingSides.map((side) => loadImageBlobFallback(existingOrderId, side, existingImages, groupId, savedGroupId)));
     } catch {
       const sides = ['front', 'back'].filter((side) => existingImages[side].fileId);
-      await Promise.all(sides.map((side) => loadImageBlobFallback(existingOrderId, side, existingImages)));
+      await Promise.all(sides.map((side) => loadImageBlobFallback(existingOrderId, side, existingImages, groupId, savedGroupId)));
     }
   }
 
-  async function loadImageBlobFallback(existingOrderId, side, existingImages) {
+  async function loadImageBlobFallback(existingOrderId, side, existingImages, groupId, savedGroupId) {
     try {
-      const url = await getImageBlobUrl(existingOrderId, side);
+      const url = await getImageBlobUrl(existingOrderId, side, savedGroupId);
       setImages((current) => {
         const image = current[side];
         if (image.file || image.fileId !== existingImages[side].fileId || image.removed) {
@@ -142,22 +193,26 @@ export default function App() {
           return current;
         }
         return { ...current, [side]: { ...image, url, loading: false } };
-      });
+      }, groupId);
     } catch {
       setImages((current) => ({
         ...current,
         [side]: { ...current[side], loading: false }
-      }));
+      }), groupId);
     }
   }
 
   function resetToOrder() {
+    if (submittingRef.current) return;
     setStep('order');
     setOrderId('');
     setOrder(null);
     setTemplates([]);
-    setSelectedType('');
-    setImages({ front: EMPTY_IMAGE, back: EMPTY_IMAGE });
+    groups.forEach((group) => Object.values(group.images).forEach((image) => {
+      if (image.url.startsWith('blob:')) URL.revokeObjectURL(image.url);
+    }));
+    setGroups([createImageGroup()]);
+    setActiveGroupId(null);
     setMessage('');
     setError('');
   }
@@ -175,14 +230,13 @@ export default function App() {
       setOrderId(normalizedOrderId);
       setOrder(result);
       setTemplates(result.templates || []);
-      setSelectedType(customerTypeSlug(result.notebook_type || ''));
-      const nextImages = {
-        front: imageState(result.front_url, result.front_file_id),
-        back: imageState(result.back_url, result.back_file_id)
-      };
-      setImages(nextImages);
+      const nextGroups = result.groups?.length ? result.groups.map(createImageGroup) : [createImageGroup(result)];
+      setGroups(nextGroups);
+      setActiveGroupId(nextGroups[0].id);
       setStep('upload');
-      if (result.exists) void loadExistingImages(normalizedOrderId, nextImages);
+      if (result.exists) nextGroups.forEach((group) => {
+        if (group.images.front.fileId || group.images.back.fileId) void loadExistingImages(normalizedOrderId, group);
+      });
     } catch (requestError) {
       setError(requestError.name === 'AbortError'
         ? '订单查询超时，请检查网络后重试'
@@ -194,6 +248,7 @@ export default function App() {
   }
 
   function selectType(slug) {
+    if (loading) return;
     if (customerLocked) {
       setError(lockMessage);
       return;
@@ -206,6 +261,7 @@ export default function App() {
   }
 
   function chooseImage(side, event) {
+    if (loading) return;
     if (customerLocked) {
       setError(lockMessage);
       return;
@@ -222,7 +278,7 @@ export default function App() {
       return;
     }
     const url = URL.createObjectURL(file);
-    setEditor({ side, sourceUrl: url, sourceName: file.name, temporaryUrl: url });
+    setEditor({ groupId: activeGroup.id, side, sourceUrl: url, sourceName: file.name, temporaryUrl: url });
     setError('');
   }
 
@@ -236,6 +292,7 @@ export default function App() {
   }
 
   async function editImage(side) {
+    if (loading || editingSide) return;
     if (customerLocked) {
       setError(lockMessage);
       return;
@@ -247,12 +304,13 @@ export default function App() {
     try {
       const sourceUrl = image.file || image.url.startsWith('blob:')
         ? image.url
-        : await getImageBlobUrl(orderId, side);
+        : await getImageBlobUrl(orderId, side, activeGroup.savedGroupId);
       setEditor({
+        groupId: activeGroup.id,
         side,
         sourceUrl,
         sourceName: image.file?.name || `${side}.jpg`,
-        temporaryUrl: image.file ? '' : sourceUrl
+        temporaryUrl: image.file || image.url.startsWith('blob:') ? '' : sourceUrl
       });
     } catch (requestError) {
       setError(requestError.message || '图片读取失败，请重新上传');
@@ -273,59 +331,86 @@ export default function App() {
       return;
     }
     const side = editor.side;
-    const current = images[side];
+    const targetGroup = groups.find((group) => group.id === editor.groupId);
+    if (!targetGroup) {
+      URL.revokeObjectURL(previewUrl);
+      cancelEdit();
+      return;
+    }
+    const current = targetGroup.images[side];
     if (current.url.startsWith('blob:')) URL.revokeObjectURL(current.url);
     if (editor.temporaryUrl) URL.revokeObjectURL(editor.temporaryUrl);
     setImages((currentImages) => ({
       ...currentImages,
       [side]: { file, url: previewUrl, fileId: '', removed: false }
-    }));
+    }), editor.groupId);
     setEditor(null);
     setError('');
   }
 
   async function submit() {
+    if (submittingRef.current || loading) return;
     if (customerLocked) {
       setError(lockMessage);
       return;
     }
-    if (!selectedTemplate) {
-      setError('请选择类型');
-      return;
-    }
-    if (!selectedTemplate.allow_blank && !images.front.file && !images.front.fileId) {
-      setError('一张图请先上传正面图片');
-      return;
+    for (const [index, group] of groups.entries()) {
+      const template = customerTemplates.find((item) => item.slug === group.selectedType);
+      let groupError = !template ? '请选择类型' : '';
+      if (template && !template.allow_blank && !group.images.front.file && !group.images.front.fileId) {
+        groupError = '一张图请先上传正面图片';
+      }
+      if (!Number.isSafeInteger(Number(group.quantity)) || Number(group.quantity) < 1) groupError = '本组数量必须是大于 0 的整数';
+      if (groupError) {
+        setActiveGroupId(group.id);
+        setError(groups.length > 1 ? `第 ${index + 1} 组：${groupError}` : groupError);
+        return;
+      }
     }
 
+    submittingRef.current = true;
     setLoading(true);
     setError('');
     setMessage('正在上传图片...');
     try {
-      const files = {
-        front: images.front.file,
-        back: selectedTemplate.image_count === 1 ? null : images.back.file
-      };
-      const uploadResult = files.front || files.back
-        ? await uploadImages(orderId, files, { preview: false })
-        : {};
-      const frontFileId = images.front.removed ? null : (uploadResult.front_file_id || images.front.fileId || null);
-      const backFileId = selectedTemplate.image_count === 1 || images.back.removed
-        ? null
-        : (uploadResult.back_file_id || images.back.fileId || null);
-
-      await submitOrder(orderId, {
-        notebook_type: backendTypeSlug(selectedType, order?.notebook_type),
-        front_file_id: frontFileId,
-        back_file_id: backFileId,
-        source: 'web'
-      });
+      const savedGroups = [];
+      for (const [index, group] of groups.entries()) {
+        setMessage(`正在上传第 ${index + 1}/${groups.length} 组图片...`);
+        const { front, back } = group.images;
+        const oneImage = group.selectedType === 'one_image';
+        const files = { front: front.file, back: oneImage ? null : back.file };
+        let uploaded = {};
+        if (files.front || files.back) {
+          try { uploaded = await uploadImages(orderId, files, { preview: false }); }
+          catch (failure) { throw new Error(`第 ${index + 1} 组：${failure.message || '图片上传失败，请重试'}`); }
+          setImages((current) => {
+            const next = { ...current };
+            for (const side of ['front', 'back']) {
+              if (files[side] && uploaded[side + '_file_id'] && current[side].file === files[side]) {
+                next[side] = { ...current[side], file: null, fileId: uploaded[side + '_file_id'], removed: false };
+              }
+            }
+            return next;
+          }, group.id);
+        }
+        savedGroups.push({
+          id: group.id,
+          notebook_type: backendTypeSlug(group.selectedType, group.notebookType),
+          quantity: Number(group.quantity),
+          front_file_id: front.removed ? null : uploaded.front_file_id || front.fileId || null,
+          back_file_id: oneImage || back.removed ? null : uploaded.back_file_id || back.fileId || null
+        });
+      }
+      setMessage('正在保存全部组...');
+      const result = await submitOrder(orderId, { groups: savedGroups, source: 'web' });
+      setOrder(result);
       setMessage('');
       setStep('success');
     } catch (requestError) {
       setError(requestError.message || '提交失败，请稍后重试');
       setMessage('');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
@@ -399,6 +484,22 @@ export default function App() {
       </header>
 
       <section className="customer-card type-card">
+        <div className="order-groups">
+        <div className="order-group-tabs">
+          {groups.map((group, index) => (
+            <button
+              key={group.id}
+              className={`order-group-tab${group.id === activeGroup.id ? ' selected' : ''}`}
+              aria-pressed={group.id === activeGroup.id}
+              disabled={loading || Boolean(editingSide)}
+              onClick={() => { setActiveGroupId(group.id); setError(''); }}
+            >第 {index + 1} 组</button>
+          ))}
+          <button className="clear-button" onClick={addGroup} disabled={customerLocked || loading || Boolean(editingSide)}>＋ 添加一组</button>
+          {groups.length > 1 && <button className="clear-button" onClick={removeGroup} disabled={customerLocked || loading || Boolean(editingSide)}>删除本组</button>}
+        </div>
+        <p>不同款式或不同图片，添加一组；相同图片印多本，修改本组数量。</p>
+        </div>
         <div className="section-heading">
           <div>
             <h2>请正确选择类型</h2>
@@ -417,7 +518,7 @@ export default function App() {
               className={`type-option ${selectedType === template.slug ? 'selected' : ''}`}
               key={template.slug}
               onClick={() => selectType(template.slug)}
-              disabled={customerLocked}
+              disabled={customerLocked || loading}
             >
               <span className="type-option-main">
                 <TemplateVisual slug={template.slug} />
@@ -454,6 +555,7 @@ export default function App() {
               onClear={clearImage}
               editingSide={editingSide}
               locked={customerLocked}
+              busy={loading}
             />
             {selectedTemplate.image_count > 1 && (
               <ImagePicker
@@ -465,9 +567,27 @@ export default function App() {
                 onClear={clearImage}
                 editingSide={editingSide}
                 locked={customerLocked}
+                busy={loading}
               />
             )}
           </div>
+          <label className="group-quantity">
+            <span>本组数量 <small>（相同图片印几本）</small></span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              step="1"
+              value={activeGroup.quantity}
+              disabled={customerLocked || loading}
+              onChange={(event) => {
+                const quantity = event.target.value === '' ? '' : Number(event.target.value);
+                setGroups((current) => current.map((group) => group.id === activeGroup.id ? { ...group, quantity } : group));
+                setError('');
+              }}
+            />
+          </label>
+          {groups.length > 1 && <p className="group-total">共 {groups.length} 组，合计 {totalQuantity} 本</p>}
           <button className="primary-button submit-button" onClick={submit} disabled={loading || customerLocked}>
             {customerLocked ? '制作中，无法修改' : loading ? '提交中...' : '确认提交'}
           </button>
@@ -475,6 +595,7 @@ export default function App() {
           {error && <p className="error-box">{error}</p>}
         </section>
       )}
+      {!selectedTemplate && error && <p className="error-box">{error}</p>}
       {editor && (
         <Suspense fallback={<div className="editor-backdrop"><div className="image-editor editor-loading-card">正在打开图片编辑器...</div></div>}>
           <ImageEditor
@@ -512,38 +633,38 @@ function TemplateVisual({ slug }) {
   );
 }
 
-function ImagePicker({ label, side, image, required, onChange, onEdit, editingSide, locked = false }) {
+function ImagePicker({ label, side, image, required, onChange, onEdit, editingSide, locked = false, busy = false }) {
   return (
     <div className="image-picker">
       <div className="picker-title">{label}{required && <em>必传</em>}</div>
-      <div
-        className={`image-preview ${image.url ? 'has-image' : ''}${locked ? ' locked' : ''}`}
-        role={image.url && !locked ? 'button' : undefined}
-        tabIndex={image.url && !locked ? 0 : undefined}
-        onClick={() => image.url && !locked && onEdit(side)}
-        onKeyDown={(event) => {
-          if (image.url && !locked && (event.key === 'Enter' || event.key === ' ')) onEdit(side);
-        }}
-        aria-label={image.url ? (locked ? `${label}，制作中，图片已锁定` : `${label}，点击调整图片`) : undefined}
-      >
-        {image.url ? (
-          <>
+      <div className="image-mount">
+        <div
+          className={`image-preview ${image.url ? 'has-image' : ''}${locked ? ' locked' : ''}`}
+          role={image.url && !locked ? 'button' : undefined}
+          tabIndex={image.url && !locked ? 0 : undefined}
+          onClick={() => image.url && !locked && !busy && onEdit(side)}
+          onKeyDown={(event) => {
+            if (image.url && !locked && !busy && (event.key === 'Enter' || event.key === ' ')) onEdit(side);
+          }}
+          aria-label={image.url ? (locked ? `${label}，制作中，图片已锁定` : `${label}，点击调整图片`) : undefined}
+        >
+          {image.url ? (
             <img src={image.url} alt={label} />
-            <span className="image-edit-hint">
-              {locked ? '制作中，图片已锁定' : editingSide === side ? '正在打开编辑器...' : '点击调整图片'}
-            </span>
-          </>
-        ) : locked ? (
-          <div className="empty-image-picker locked">
-            <span>制作中，不能上传</span>
-          </div>
-        ) : (
-          <label className="empty-image-picker">
-            <span>{image.loading ? '正在读取之前的图片...' : '点击选择图片'}</span>
-            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => onChange(side, event)} />
-          </label>
-        )}
+          ) : locked ? (
+            <div className="empty-image-picker locked">
+              <span>制作中，不能上传</span>
+            </div>
+          ) : (
+            <label className="empty-image-picker">
+              <span>{image.loading ? '正在读取之前的图片...' : '点击选择图片'}</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={(event) => onChange(side, event)} />
+            </label>
+          )}
+        </div>
       </div>
+      <span className="image-edit-hint" aria-hidden={!image.url}>
+        {image.url && (locked ? '制作中，图片已锁定' : editingSide === side ? '正在打开编辑器...' : '点击调整图片')}
+      </span>
     </div>
   );
 }

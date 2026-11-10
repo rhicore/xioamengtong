@@ -141,6 +141,49 @@ async function run() {
   assert.equal(result.response.status, 409);
   assert.match(result.body.message, /制作流程/);
 
+  const groups = [];
+  for (const [index, type] of ['chexian', 'huoye'].entries()) {
+    const form = new FormData();
+    form.append('front', new Blob([`group-${index}`], { type: 'image/jpeg' }), 'front.jpg');
+    if (index === 0) form.append('back', new Blob(['group-0-back'], { type: 'image/jpeg' }), 'back.jpg');
+    const upload = await request(baseUrl, '/api/v1/customer/orders/MULTI-001/images?preview=0', { method: 'POST', body: form });
+    assert.equal(upload.response.status, 200);
+    groups.push({
+      id: `group-${index}`, notebook_type: type, quantity: index + 2,
+      front_file_id: upload.body.data.front_file_id,
+      back_file_id: upload.body.data.back_file_id || null
+    });
+  }
+  assert.notEqual(groups[0].front_file_id, groups[1].front_file_id);
+  const saveGroups = (items) => request(baseUrl, '/api/v1/customer/orders/MULTI-001', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups: items })
+  });
+  result = await saveGroups(groups);
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.data.quantity, 5);
+  assert.deepEqual(result.body.data.groups, groups);
+
+  result = await request(baseUrl, '/api/v1/customer/orders/MULTI-001?preview=0');
+  assert.deepEqual(result.body.data.groups.map(({ front_url, back_url, ...group }) => group), groups);
+  for (const [index, group] of groups.entries()) {
+    const query = `?groupId=${group.id}`;
+    result = await request(baseUrl, '/api/v1/customer/orders/MULTI-001/images' + query);
+    assert.match(result.body.data.front_url, new RegExp(encodeURIComponent(group.front_file_id)));
+    const photo = await fetch(baseUrl + '/api/v1/customer/orders/MULTI-001/images/front' + query);
+    assert.equal(await photo.text(), `group-${index}`);
+  }
+  result = await saveGroups([groups[0], { ...groups[1], quantity: 0 }]);
+  assert.equal(result.response.status, 400);
+  assert.deepEqual((await store.getOrderByOrderId('MULTI-001')).groups, groups);
+  result = await saveGroups([{ ...groups[1], quantity: 4 }]);
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.data.quantity, 4);
+  assert.equal(result.body.data.groups.length, 1);
+  const missing = await fetch(baseUrl + '/api/v1/customer/orders/MULTI-001/images/front?groupId=group-0');
+  assert.equal(missing.status, 404);
+
   await new Promise((resolve) => server.close(resolve));
   console.log('customer api query, multipart upload and submit tests passed');
 }

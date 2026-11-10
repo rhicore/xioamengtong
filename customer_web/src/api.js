@@ -39,9 +39,10 @@ export async function uploadImages(orderId, files, options = {}) {
   return readResponse(response);
 }
 
-export async function getImageBlobUrl(orderId, side) {
+export async function getImageBlobUrl(orderId, side, groupId) {
+  const query = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
   const response = await fetch(
-    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images/${encodeURIComponent(side)}`
+    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images/${encodeURIComponent(side)}${query}`
   );
   if (!response.ok) {
     let message = `图片读取失败（${response.status}）`;
@@ -56,9 +57,10 @@ export async function getImageBlobUrl(orderId, side) {
   return URL.createObjectURL(await response.blob());
 }
 
-export async function getImagePreviewUrls(orderId) {
+export async function getImagePreviewUrls(orderId, groupId) {
+  const query = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
   const response = await fetch(
-    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images`
+    `${baseUrl}/api/v1/customer/orders/${encodeURIComponent(orderId)}/images${query}`
   );
   return readResponse(response);
 }

@@ -8,6 +8,7 @@ Thumbs.db
 
 # --- 本地环境 ---
 .env
+.local-demo/
 
 # --- Node / Frontend ---
 node_modules/

@@ -48,12 +48,21 @@ function createMemoryStore() {
     return value === condition;
   }
 
+  function matchesOrder(order, filters) {
+    if (filters.__operator === 'and') return filters.value.every(item => matchesOrder(order, item));
+    if (filters.__operator === 'or') return filters.value.some(item => matchesOrder(order, item));
+    return Object.entries(filters).every(([key, condition]) => key === 'groups.notebook_type'
+      ? (order.groups || []).some(group => same(group.notebook_type, condition))
+      : same(order[key], condition));
+  }
+
   const db = {
     command: {
       in: (value) => ({ __operator: 'in', value }),
       gte: (value) => ({ __operator: 'gte', value }),
       lt: (value) => ({ __operator: 'lt', value }),
-      and: (...value) => ({ __operator: 'and', value })
+      and: (...value) => ({ __operator: 'and', value }),
+      or: (...value) => ({ __operator: 'or', value })
     },
     RegExp: ({ regexp, options }) => ({
       __operator: 'regexp',
@@ -105,7 +114,7 @@ function createMemoryStore() {
       return templates;
     },
     async listOrders(filters, page, pageSize) {
-      const matches = orders.filter((order) => Object.entries(filters).every(([key, value]) => same(order[key], value)));
+      const matches = orders.filter((order) => matchesOrder(order, filters));
       return {
         items: matches.slice((page - 1) * pageSize, page * pageSize),
         total: matches.length
@@ -312,6 +321,43 @@ async function run() {
   assert.strictEqual(result.response.status, 200);
   assert.strictEqual(result.response.headers.get('content-type'), 'application/zip');
   assert.ok(result.body.includes(Buffer.from('订单-1/订单信息.json')));
+
+  await store.updateOrder('order-1', {
+    quantity: 5,
+    groups: [
+      { id: 'a', notebook_type: 'chexian', quantity: 3, front_file_id: 'cloud://front-1.jpg', back_file_id: 'cloud://back-1.jpg' },
+      { id: 'b', notebook_type: 'huoye', quantity: 2, front_file_id: 'cloud://group-b.png', back_file_id: null }
+    ]
+  });
+  result = await request(baseUrl, '/api/v1/admin/orders?order_id=1&preview=0', {}, adminCookie);
+  assert.deepStrictEqual(result.body.data.items[0].groups.map(g => [g.display_name, g.quantity]), [['胶套本', 3], ['活页本', 2]]);
+  result = await request(baseUrl, '/api/v1/admin/orders?notebook_type=huoye&preview=0', {}, adminCookie);
+  assert.deepStrictEqual(result.body.data.items.map(order => order.order_id), ['1']);
+  result = await request(baseUrl, '/api/v1/admin/orders?order_id=2&notebook_type=huoye&preview=0', {}, adminCookie);
+  assert.strictEqual(result.body.data.total, 0);
+  result = await request(baseUrl, '/api/v1/admin/order-previews', {
+    method: 'POST', body: JSON.stringify({ orderIds: ['1'] })
+  }, adminCookie);
+  const previews = result.body.data['1'].groups;
+  assert.strictEqual(previews[1].back_download_url, '');
+  assert.match(previews[1].front_url, /group-b\.png/);
+  const secondImage = await fetch(baseUrl + previews[1].front_download_url, { headers: { Cookie: adminCookie } });
+  assert.strictEqual(secondImage.headers.get('content-type'), 'image/png');
+  assert.strictEqual(await secondImage.text(), 'mock image cloud://group-b.png');
+  const firstPath = '订单-1/第1组-3本/拼多多_胶套本_1_前.jpg';
+  const secondPath = '订单-1/第2组-2本/拼多多_活页本_1_前.png';
+  result = await request(baseUrl, '/api/v1/admin/batch-download-manifest', {
+    method: 'POST', body: JSON.stringify({ orderIds: ['1'] })
+  }, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  const entries = result.body.data.entries;
+  assert.ok(entries.some(entry => entry.name === firstPath && entry.url));
+  assert.ok(entries.some(entry => entry.name === secondPath && entry.url.includes('group-b.png')));
+  assert.strictEqual(JSON.parse(entries.find(entry => entry.name === '订单-1/第2组-2本/订单信息.json').content).quantity, 2);
+  result = await request(baseUrl, '/api/v1/admin/batch-download?orderIds=1', {}, adminCookie);
+  assert.strictEqual(result.response.status, 200);
+  assert.ok(result.body.includes(Buffer.from(firstPath)));
+  assert.ok(result.body.includes(Buffer.from(secondPath)));
 
   result = await request(baseUrl, '/api/v1/admin/orders', {
     method: 'DELETE',

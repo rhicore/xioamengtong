@@ -189,13 +189,13 @@ export default function App() {
     setMessage('');
   }
 
-  function openImagePreview(order, side) {
-    const url = orderImageUrl(order, side);
+  function openImagePreview(order, side, group = order, groupLabel = '') {
+    const url = orderImageUrl(group, side);
     if (!url) return;
     setImagePreviewSize(null);
     setImagePreview({
       url,
-      title: `${order.order_id} · ${side === 'front' ? '前图' : '后图'}`
+      title: `${order.order_id} · ${groupLabel}${side === 'front' ? '前图' : '后图'}`
     });
   }
 
@@ -741,24 +741,32 @@ export default function App() {
                 <td><input type="checkbox" checked={selectedIds.includes(order.order_id)} onChange={() => toggleOrder(order.order_id)} /></td>
                   <td className="strong">{order.order_id}</td>
                   <td>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
-                  <td>{order.display_name || order.notebook_type}</td>
+                  <td>{order.groups?.length
+                    ? [...new Set(order.groups.map((group) => group.display_name || group.notebook_type))].join('、')
+                    : order.display_name || order.notebook_type}</td>
                 <td><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>
                 <td>
-                  <div className="order-image-cell">
-                    {orderImageUrl(order, 'front') && (
-                      <button className="image-thumb-button" onClick={() => openImagePreview(order, 'front')} aria-label={`${order.order_id} 前图`}>
-                        <img src={orderImageUrl(order, 'front')} alt="前图" />
-                      </button>
-                    )}
-                    {orderImageUrl(order, 'back') && (
-                      <button className="image-thumb-button" onClick={() => openImagePreview(order, 'back')} aria-label={`${order.order_id} 后图`}>
-                        <img src={orderImageUrl(order, 'back')} alt="后图" />
-                      </button>
-                    )}
-                    {!orderImageUrl(order, 'front') && !orderImageUrl(order, 'back') && (order.front_file_id || order.back_file_id)
-                      ? <span className="image-empty">读取中…</span>
-                      : (!orderImageUrl(order, 'front') && !orderImageUrl(order, 'back') && <span className="image-empty">无图片</span>)}
-                  </div>
+                  {(order.groups?.length ? order.groups : [order]).map((group, index) => {
+                    const label = order.groups?.length ? `第 ${index + 1} 组 · ` : '';
+                    return (
+                      <div key={group.id || order.order_id}>
+                        {label && <div>{label}{group.display_name || group.notebook_type} · {group.quantity} 本</div>}
+                        <div className="order-image-cell">
+                          {['front', 'back'].map((side) => {
+                            const url = orderImageUrl(group, side);
+                            const name = side === 'front' ? '前图' : '后图';
+                            return url && (
+                              <button key={side} className="image-thumb-button" onClick={() => openImagePreview(order, side, group, label)} aria-label={`${order.order_id} ${label}${name}`}>
+                                <img src={url} alt={name} />
+                              </button>
+                            );
+                          })}
+                          {!orderImageUrl(group, 'front') && !orderImageUrl(group, 'back') &&
+                            <span className="image-empty">{group.front_file_id || group.back_file_id ? '读取中…' : '无图片'}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </td>
                 <td className="time-cell">
                   <div><span>上传</span>{formatRelativeTime(getOrderUploadTime(order))}</div>

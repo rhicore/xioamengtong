@@ -21,8 +21,25 @@ function imageContentType(fileID) {
   return 'image/jpeg';
 }
 
-function buildAdminImageDownloadUrl(orderId, side) {
-  return `/api/v1/admin/orders/${encodeURIComponent(orderId)}/images/${side}`;
+function buildAdminImageDownloadUrl(orderId, side, groupId) {
+  const query = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
+  return `/api/v1/admin/orders/${encodeURIComponent(orderId)}/images/${side}${query}`;
+}
+
+function orderImageIds(order) {
+  return (order.groups?.length ? order.groups : [order])
+    .flatMap((group) => [group.front_file_id, group.back_file_id]).filter(Boolean);
+}
+
+function groupPreviews(order, imageUrls, templateMap) {
+  return order.groups?.map((group) => ({
+    ...group,
+    display_name: normalizeTemplate(templateMap[group.notebook_type] || { slug: group.notebook_type }).display_name,
+    front_url: imageUrls[group.front_file_id] || '',
+    back_url: imageUrls[group.back_file_id] || '',
+    front_download_url: group.front_file_id ? buildAdminImageDownloadUrl(order.order_id, 'front', group.id) : '',
+    back_download_url: group.back_file_id ? buildAdminImageDownloadUrl(order.order_id, 'back', group.id) : ''
+  }));
 }
 
 function contains(db, value) {
@@ -90,12 +107,20 @@ async function listOrders(store, event = {}) {
     }
   }
 
-  const result = await store.listOrders(filters, page, pageSize);
+  let queryFilters = filters;
+  if (filters.notebook_type) {
+    const { notebook_type: typeCondition, ...otherFilters } = filters;
+    queryFilters = store.db.command.and(otherFilters, store.db.command.or(
+      { notebook_type: typeCondition },
+      { 'groups.notebook_type': typeCondition }
+    ));
+  }
+  const result = await store.listOrders(queryFilters, page, pageSize);
   let imageUrls = {};
   const includeImageUrls = event.preview !== '0' && event.preview !== 'false';
   if (includeImageUrls && typeof store.getTempFileURLMap === 'function') {
     try {
-      const fileIds = result.items.flatMap((order) => [order.front_file_id, order.back_file_id]);
+      const fileIds = result.items.flatMap(orderImageIds);
       imageUrls = await store.getTempFileURLMap(fileIds);
     } catch (error) {
       console.warn('admin image preview urls unavailable', error.message || error);
@@ -113,6 +138,7 @@ async function listOrders(store, event = {}) {
           platform: resolvedPlatform,
           platform_display: resolvedPlatform || '未知平台',
           platform_detection: detectedPlatform,
+          groups: groupPreviews(order, imageUrls, templateMap),
           front_url: imageUrls[order.front_file_id] || '',
           back_url: imageUrls[order.back_file_id] || ''
         }
@@ -130,11 +156,11 @@ async function getOrderImagePreviews(store, orderIds = []) {
     .map((id) => String(id).trim()).filter(Boolean))].slice(0, 100);
   if (normalizedIds.length === 0) return {};
 
-  const orders = await store.getOrdersByIds(normalizedIds);
+  const [orders, templateMap] = await Promise.all([store.getOrdersByIds(normalizedIds), store.getTemplateMap()]);
   let imageUrls = {};
   if (typeof store.getTempFileURLMap === 'function') {
     try {
-      const fileIds = orders.flatMap((order) => [order.front_file_id, order.back_file_id]);
+      const fileIds = orders.flatMap(orderImageIds);
       imageUrls = await store.getTempFileURLMap(fileIds);
     } catch (error) {
       console.warn('admin image preview urls unavailable', error.message || error);
@@ -142,6 +168,7 @@ async function getOrderImagePreviews(store, orderIds = []) {
   }
 
   return Object.fromEntries(orders.map((order) => [order.order_id, {
+    groups: groupPreviews(order, imageUrls, templateMap),
     front_url: imageUrls[order.front_file_id] || '',
     back_url: imageUrls[order.back_file_id] || '',
     front_download_url: order.front_file_id
@@ -153,13 +180,14 @@ async function getOrderImagePreviews(store, orderIds = []) {
   }]));
 }
 
-async function getAdminOrderImage(store, value, side) {
+async function getAdminOrderImage(store, value, side, groupId) {
   const orderId = String(value || '').trim();
   if (!orderId || !['front', 'back'].includes(side)) throw failure('图片不存在', 404);
   const order = typeof store.getOrderByOrderId === 'function'
     ? await store.getOrderByOrderId(orderId)
     : (await store.getOrdersByIds([orderId]))[0];
-  const fileID = order && order[side + '_file_id'];
+  const group = groupId ? order?.groups?.find((item) => item.id === groupId) : order;
+  const fileID = group?.[side + '_file_id'];
   if (!fileID) throw failure('图片不存在', 404);
 
   try {
@@ -172,7 +200,7 @@ async function getAdminOrderImage(store, value, side) {
       contentType: imageContentType(fileID),
       fileName: buildDownloadFileName(
         order,
-        templateMap[order.notebook_type],
+        templateMap[group.notebook_type],
         side,
         '.jpg'
       )
@@ -229,10 +257,7 @@ async function deleteOrders(store, orderIds) {
   const orders = await store.getOrdersByIds(normalizedIds);
   const foundIds = new Set(orders.map((order) => order.order_id));
   const missingOrderIds = normalizedIds.filter((orderId) => !foundIds.has(orderId));
-  const fileIds = [...new Set(orders.flatMap((order) => [
-    order.front_file_id,
-    order.back_file_id
-  ].filter(Boolean)))];
+  const fileIds = [...new Set(orders.flatMap(orderImageIds))];
 
   if (fileIds.length > 0) {
     if (typeof store.deleteFiles !== 'function') {
@@ -331,7 +356,7 @@ async function getBatchDownloadContext(store, orderIds) {
   let fileUrls = {};
   if (typeof store.getTempFileURLMap === 'function') {
     try {
-      const fileIds = orders.flatMap((order) => [order.front_file_id, order.back_file_id]);
+      const fileIds = orders.flatMap(orderImageIds);
       const chunks = [];
       for (let index = 0; index < fileIds.length; index += 50) {
         chunks.push(fileIds.slice(index, index + 50));
@@ -347,29 +372,10 @@ async function getBatchDownloadContext(store, orderIds) {
 
 async function getBatchDownloadManifest(store, orderIds) {
   const { templateMap, orders, fileUrls } = await getBatchDownloadContext(store, orderIds);
-  const entries = [];
-
-  orders.forEach((order) => {
-    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
-    entries.push({
-      name: entry.name,
-      content: entry.content.toString('utf8')
-    });
-
-    ['front', 'back'].forEach((side) => {
-      const fileID = order[side + '_file_id'];
-      const url = fileID ? fileUrls[fileID] : '';
-      if (!url) return;
-      entries.push({
-        name: folderName + '/' + buildDownloadFileName(
-          order,
-          templateMap[order.notebook_type],
-          side,
-          '.jpg'
-        ),
-        url
-      });
-    });
+  const entries = orders.flatMap((order) => orderDownloadEntries(order, templateMap)).map(({ name, content, fileID }) => {
+    if (!fileID) return { name, content: content.toString('utf8') };
+    if (!fileUrls[fileID]) throw failure('图片下载地址暂不可用', 502);
+    return { name, url: fileUrls[fileID] };
   });
 
   return {
@@ -378,40 +384,47 @@ async function getBatchDownloadManifest(store, orderIds) {
   };
 }
 
-function buildOrderInfoEntry(order, templateMap) {
+function orderDownloadEntries(order, templateMap) {
   const folderName = buildOrderFolderName(order);
-  return {
-    folderName,
-    entry: {
-      name: folderName + '/订单信息.json',
-      content: Buffer.from(JSON.stringify(buildOrderInfo(order, templateMap[order.notebook_type]), null, 2) + '\n', 'utf8')
+  const entries = [];
+  function addInfo(item, folder) {
+    const info = buildOrderInfo(item, templateMap[item.notebook_type]);
+    entries.push({ name: folder + '/订单信息.json', content: Buffer.from(JSON.stringify(info, null, 2) + '\n') });
+  }
+  function addImages(item, folder) {
+    for (const side of ['front', 'back']) {
+      const fileID = item[side + '_file_id'];
+      if (!fileID) continue;
+      const extension = /\.(png|webp|jpe?g)$/i.exec(fileID)?.[0] || '.jpg';
+      const name = folder + '/' + buildDownloadFileName(order, templateMap[item.notebook_type], side, extension);
+      entries.push({ name, fileID });
     }
-  };
+  }
+  addInfo(order, folderName);
+  if (order.groups?.length) {
+    order.groups.forEach((group, index) => {
+      const folder = `${folderName}/第${index + 1}组-${group.quantity}本`;
+      addInfo({ ...order, ...group }, folder);
+      addImages(group, folder);
+    });
+  } else {
+    addImages(order, folderName);
+  }
+  return entries;
 }
 
-async function getOrderImageEntries(store, order, templateMap, folderName, fileUrls = {}) {
-  const imageEntries = await Promise.all(['front', 'back'].map(async (side) => {
-    const fileID = order[side + '_file_id'];
-    if (!fileID) return null;
-    const content = await downloadFileWithRetry(store, fileID, fileUrls[fileID]);
-    const fileName = buildDownloadFileName(
-      order,
-      templateMap[order.notebook_type],
-      side,
-      '.jpg'
-    );
-    return { name: folderName + '/' + fileName, content };
+async function getOrderDownloadEntries(store, order, templateMap, fileUrls) {
+  return mapWithConcurrency(orderDownloadEntries(order, templateMap), 2, async ({ name, content, fileID }) => ({
+    name,
+    content: fileID ? await downloadFileWithRetry(store, fileID, fileUrls[fileID]) : content
   }));
-  return imageEntries.filter(Boolean);
 }
 
 async function createBatchDownload(store, orderIds) {
   const { templateMap, orders, fileUrls } = await getBatchDownloadContext(store, orderIds);
 
-  const orderEntries = await mapWithConcurrency(orders, 4, async (order) => {
-    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
-    return [entry].concat(await getOrderImageEntries(store, order, templateMap, folderName, fileUrls));
-  });
+  const orderEntries = await mapWithConcurrency(orders, 4, (order) =>
+    getOrderDownloadEntries(store, order, templateMap, fileUrls));
   const entries = orderEntries.flat();
 
   return {
@@ -431,10 +444,8 @@ async function streamBatchDownload(store, orderIds, res) {
   const archive = archiver('zip', { zlib: { level: 0 } });
   archive.pipe(res);
   await mapWithConcurrency(orders, 4, async (order) => {
-    const { folderName, entry } = buildOrderInfoEntry(order, templateMap);
-    archive.append(entry.content, { name: entry.name });
-    const imageEntries = await getOrderImageEntries(store, order, templateMap, folderName, fileUrls);
-    imageEntries.forEach((imageEntry) => archive.append(imageEntry.content, { name: imageEntry.name }));
+    const entries = await getOrderDownloadEntries(store, order, templateMap, fileUrls);
+    entries.forEach((entry) => archive.append(entry.content, { name: entry.name }));
   });
   await archive.finalize();
   return { filename };
