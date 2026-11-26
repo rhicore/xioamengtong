@@ -1,5 +1,5 @@
 // 后台订单列表：类型搜索、相对时间和批量下载入口集中在此页面。
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   batchDownload,
   createAccount,
@@ -16,6 +16,7 @@ import {
 } from './backend';
 import { formatRelativeTime, getOrderUpdatedTime, getOrderUploadTime } from './utils/time.js';
 import { detectPlatform } from './utils/platform.js';
+import OrderThumbnail, { ThumbnailProvider } from './OrderThumbnail.jsx';
 
 const EMPTY_FILTERS = {
   order_id: '',
@@ -42,6 +43,55 @@ function orderImageUrl(order, side) {
   return order[side + '_download_url'] || order[side + '_url'] || '';
 }
 
+// 每次缩略链接返回、输入筛选条件或勾选时，只更新实际变化的订单。
+const OrderRows = memo(function OrderRows({ order, selected, onToggle, onPreview }) {
+  const groups = order.groups?.length ? order.groups : [order];
+  return (
+    <tbody data-order-id={order.order_id}>
+      {groups.map((group, index) => {
+        const first = index === 0;
+        const label = order.groups?.length ? `第 ${index + 1} 组 · ` : '';
+        return (
+          <tr key={group.id || order.order_id} data-group-id={group.id}>
+            {first && (
+              <>
+                <td rowSpan={groups.length}><input type="checkbox" checked={selected} onChange={() => onToggle(order.order_id)} /></td>
+                <td rowSpan={groups.length} className="strong">{order.order_id}</td>
+                <td rowSpan={groups.length}>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
+              </>
+            )}
+            <td>{group.display_name || group.notebook_type}</td>
+            <td className="order-quantity-cell">{group.quantity || 1} 本</td>
+            <td>
+              <div className="order-image-cell">
+                {['front', 'back'].map((side) => {
+                  const url = orderImageUrl(group, side) || (group[side + '_file_id']
+                    ? `/api/v1/admin/orders/${encodeURIComponent(order.order_id)}/images/${side}${group.id ? `?groupId=${encodeURIComponent(group.id)}` : ''}` : '');
+                  const name = side === 'front' ? '前图' : '后图';
+                  return url && (
+                    <OrderThumbnail key={side} directUrl={group[side + '_url'] || ''} originalUrl={url}
+                      ready={order.previewsReady} name={name} label={`${order.order_id} ${label}${name}`}
+                      onClick={() => onPreview(order, side, { ...group, [side + '_download_url']: url }, label)} />
+                  );
+                })}
+                {!group.front_file_id && !group.back_file_id && !orderImageUrl(group, 'front') && !orderImageUrl(group, 'back') &&
+                  <span className="image-empty">无图片</span>}
+              </div>
+            </td>
+            {first && <td rowSpan={groups.length}><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>}
+            {first && (
+              <td rowSpan={groups.length} className="time-cell">
+                <div><span>上传</span>{formatRelativeTime(getOrderUploadTime(order))}</div>
+                <div><span>修改</span>{formatRelativeTime(getOrderUpdatedTime(order))}</div>
+              </td>
+            )}
+          </tr>
+        );
+      })}
+    </tbody>
+  );
+});
+
 function IcpFooter() {
   return (
     <footer className="site-footer">
@@ -61,6 +111,7 @@ export default function App() {
   const [notebookTypes, setNotebookTypes] = useState([]);
   const [notebookTypeOpen, setNotebookTypeOpen] = useState(false);
   const [orders, setOrders] = useState([]);
+  const [ordersVersion, setOrdersVersion] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0 });
@@ -80,6 +131,7 @@ export default function App() {
   const [selfPassword, setSelfPassword] = useState('');
   const [accountPasswordDrafts, setAccountPasswordDrafts] = useState({});
   const ordersRequestRef = useRef(0);
+  const previewsAbortRef = useRef(null);
   const dateRangeInvalid = Boolean(
     filters.created_from
     && filters.created_to
@@ -109,6 +161,7 @@ export default function App() {
 
   useEffect(() => {
     if (loggedIn) loadOrders(1);
+    return () => previewsAbortRef.current?.abort();
   }, [loggedIn]);
 
   async function handleLogin(event) {
@@ -133,6 +186,9 @@ export default function App() {
     }
 
     const requestId = ++ordersRequestRef.current;
+    previewsAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewsAbortRef.current = controller;
     setLoading(true);
     setMessage('');
     try {
@@ -144,10 +200,11 @@ export default function App() {
       if (requestId !== ordersRequestRef.current) return;
       const nextOrders = result.items || [];
       setOrders(nextOrders);
+      setOrdersVersion(requestId);
       setNotebookTypes(result.notebook_types || []);
       setPagination((current) => ({ ...current, page, total: result.total || 0 }));
       setSelectedIds([]);
-      void loadOrderPreviews(nextOrders, requestId);
+      void loadOrderPreviews(nextOrders, requestId, controller.signal);
     } catch (error) {
       if (requestId === ordersRequestRef.current) setMessage(error.message || '订单加载失败');
     } finally {
@@ -155,29 +212,35 @@ export default function App() {
     }
   }
 
-  async function loadOrderPreviews(pageOrders, requestId) {
+  async function loadOrderPreviews(pageOrders, requestId, signal) {
     const orderIds = pageOrders.map((order) => order.order_id).filter(Boolean);
     if (orderIds.length === 0) return;
-    try {
-      const previews = await getOrderPreviews(orderIds);
+    for (let offset = 0; offset < orderIds.length; offset += 4) {
+      if (signal.aborted || requestId !== ordersRequestRef.current) return;
+      const batch = orderIds.slice(offset, offset + 4);
+      let previews = {};
+      try {
+        previews = await getOrderPreviews(batch, { signal });
+      } catch {
+        if (signal.aborted) return;
+        // 临时链接不可用时，仍可按队列读取受保护的原图接口。
+      }
       // 图片预览只能更新发起它的那次查询，避免旧响应删掉刚新增的组。
       setOrders((current) => requestId !== ordersRequestRef.current ? current : current.map((order) => (
-        previews[order.order_id]
-          ? { ...order, ...previews[order.order_id] }
+        batch.includes(order.order_id)
+          ? { ...order, ...previews[order.order_id], previewsReady: true }
           : order
       )));
-    } catch {
-      // 缩略图加载失败不影响订单列表操作。
     }
   }
 
-  function toggleOrder(orderId) {
+  const toggleOrder = useCallback((orderId) => {
     setSelectedIds((current) => (
       current.includes(orderId)
         ? current.filter((id) => id !== orderId)
         : [...current, orderId]
     ));
-  }
+  }, []);
 
   function toggleAll() {
     const pageIds = orders.map((order) => order.order_id);
@@ -193,7 +256,7 @@ export default function App() {
     setMessage('');
   }
 
-  function openImagePreview(order, side, group = order, groupLabel = '') {
+  const openImagePreview = useCallback((order, side, group = order, groupLabel = '') => {
     const url = orderImageUrl(group, side);
     if (!url) return;
     setImagePreviewSize(null);
@@ -201,7 +264,7 @@ export default function App() {
       url,
       title: `${order.order_id} · ${groupLabel}${side === 'front' ? '前图' : '后图'}`
     });
-  }
+  }, []);
 
   function handlePreviewImageLoad(event) {
     const image = event.currentTarget;
@@ -311,6 +374,7 @@ export default function App() {
 
   async function handleLogout() {
     ordersRequestRef.current += 1;
+    previewsAbortRef.current?.abort();
     try {
       await signOut();
     } finally {
@@ -728,6 +792,7 @@ export default function App() {
         </div>
       </section>
 
+      <ThumbnailProvider key={ordersVersion}>
       <section className="table-card">
         <table>
           <thead>
@@ -742,52 +807,10 @@ export default function App() {
               <th>上传/修改时间</th>
             </tr>
           </thead>
-          {orders.map((order) => {
-            const groups = order.groups?.length ? order.groups : [order];
-            return (
-              <tbody key={order.order_id} data-order-id={order.order_id}>
-                {groups.map((group, index) => {
-                  const first = index === 0;
-                  const label = order.groups?.length ? `第 ${index + 1} 组 · ` : '';
-                  return (
-                    <tr key={group.id || order.order_id} data-group-id={group.id}>
-                      {first && (
-                        <>
-                          <td rowSpan={groups.length}><input type="checkbox" checked={selectedIds.includes(order.order_id)} onChange={() => toggleOrder(order.order_id)} /></td>
-                          <td rowSpan={groups.length} className="strong">{order.order_id}</td>
-                          <td rowSpan={groups.length}>{order.platform_display || order.platform || detectPlatform(order.order_id) || '未知平台'}</td>
-                        </>
-                      )}
-                      <td>{group.display_name || group.notebook_type}</td>
-                      <td className="order-quantity-cell">{group.quantity || 1} 本</td>
-                      <td>
-                        <div className="order-image-cell">
-                          {['front', 'back'].map((side) => {
-                            const url = orderImageUrl(group, side);
-                            const name = side === 'front' ? '前图' : '后图';
-                            return url && (
-                              <button key={side} className="image-thumb-button" onClick={() => openImagePreview(order, side, group, label)} aria-label={`${order.order_id} ${label}${name}`}>
-                                <img src={url} alt={name} />
-                              </button>
-                            );
-                          })}
-                          {!orderImageUrl(group, 'front') && !orderImageUrl(group, 'back') &&
-                            <span className="image-empty">{group.front_file_id || group.back_file_id ? '读取中…' : '无图片'}</span>}
-                        </div>
-                      </td>
-                      {first && <td rowSpan={groups.length}><span className={`status-pill ${order.status}`}>{orderStatusLabel(order.status)}</span></td>}
-                      {first && (
-                        <td rowSpan={groups.length} className="time-cell">
-                          <div><span>上传</span>{formatRelativeTime(getOrderUploadTime(order))}</div>
-                          <div><span>修改</span>{formatRelativeTime(getOrderUpdatedTime(order))}</div>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            );
-          })}
+          {orders.map((order) => (
+            <OrderRows key={order.order_id} order={order} selected={selectedIds.includes(order.order_id)}
+              onToggle={toggleOrder} onPreview={openImagePreview} />
+          ))}
           {orders.length === 0 && <tbody><tr><td colSpan="8" className="empty-cell">暂无订单</td></tr></tbody>}
         </table>
         <div className="pagination">
@@ -797,6 +820,7 @@ export default function App() {
           <button disabled={currentPage >= totalPages || loading} onClick={() => loadOrders(currentPage + 1)}>下一页</button>
         </div>
       </section>
+      </ThumbnailProvider>
       {imagePreview && (
         <div className="image-modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setImagePreview(null);

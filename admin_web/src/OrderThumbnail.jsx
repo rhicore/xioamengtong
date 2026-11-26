@@ -1,0 +1,136 @@
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+
+const ThumbnailQueue = createContext(null);
+
+function createThumbnailQueue() {
+  const jobs = new Map();
+  let active = 0;
+  let timer;
+  let destroyed = false;
+  const schedule = () => {
+    if (timer || destroyed) return;
+    timer = window.setTimeout(() => { timer = null; drain(); }, 0);
+  };
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const job = jobs.get(entry.target);
+      if (job) job.visible = entry.isIntersecting;
+    }
+    schedule();
+  }, { rootMargin: '160px 0px' });
+
+  function drain() {
+    const pending = [...jobs.values()].filter(job => job.visible && !job.started);
+    // Observer 回调顺序不保证等于页面顺序；按 DOM 排序，不逐张测量布局。
+    pending.sort((a, b) => a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+    for (const job of pending) {
+      if (active >= 3) break;
+      job.started = true;
+      active++;
+      job.start().finally(() => {
+        active--;
+        if (jobs.get(job.element) === job) {
+          jobs.delete(job.element);
+          observer.unobserve(job.element);
+        }
+        schedule();
+      });
+    }
+  }
+
+  return {
+    add(element, start, cancel) {
+      const job = { element, start, cancel, visible: false, started: false };
+      jobs.set(element, job);
+      observer.observe(element);
+      return () => {
+        if (jobs.get(element) === job) jobs.delete(element);
+        observer.unobserve(element);
+        cancel();
+      };
+    },
+    destroy() {
+      destroyed = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      for (const job of jobs.values()) job.cancel();
+      jobs.clear();
+    }
+  };
+}
+
+export function ThumbnailProvider({ children }) {
+  const [queue, setQueue] = useState(null);
+  useEffect(() => {
+    const next = createThumbnailQueue();
+    setQueue(next);
+    return () => next.destroy();
+  }, []);
+  return <ThumbnailQueue.Provider value={queue}>{children}</ThumbnailQueue.Provider>;
+}
+
+export function thumbnailSources(directUrl, originalUrl) {
+  let thumbnail = '';
+  try {
+    const url = new URL(directUrl);
+    if (url.protocol === 'https:' && /\.(tcb\.qcloud\.la|tcloudbaseapp\.com|myqcloud\.com)$/.test(url.hostname)) {
+      // 保留临时链接的原始签名；只在列表请求 2 倍像素的小图，不修改源文件。
+      thumbnail = `${directUrl}${directUrl.includes('?') ? '&' : '?'}imageMogr2/thumbnail/80x/quality/80/format/jpg`;
+    }
+  } catch { /* 本地图片和非云存储地址沿用原链接。 */ }
+  return [...new Set([thumbnail, directUrl, originalUrl].filter(Boolean))];
+}
+
+export default function OrderThumbnail({ directUrl, originalUrl, ready, name, label, onClick }) {
+  const queue = useContext(ThumbnailQueue);
+  const imageRef = useRef(null);
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!queue || !ready) return;
+    const image = imageRef.current;
+    const sources = thumbnailSources(directUrl, originalUrl);
+    if (!sources.length) return;
+    let finish, timeout, cancelled = false;
+    setFailed(false);
+    setLoaded(false);
+    const stop = () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      image.onload = image.onerror = null;
+      image.removeAttribute('src');
+      finish?.();
+    };
+    return queue.add(image, () => new Promise(resolve => {
+      finish = resolve;
+      let index = 0;
+      const next = () => {
+        clearTimeout(timeout);
+        if (cancelled) return resolve();
+        if (index >= sources.length) {
+          image.onload = image.onerror = null;
+          setFailed(true);
+          return resolve();
+        }
+        image.src = sources[index++];
+        timeout = window.setTimeout(next, 20000);
+      };
+      image.onload = async () => {
+        clearTimeout(timeout);
+        try { await image.decode(); } catch { /* 已完成加载的旧格式仍交由浏览器显示。 */ }
+        if (cancelled) return resolve();
+        setLoaded(true);
+        image.onload = image.onerror = null;
+        resolve();
+      };
+      image.onerror = next;
+      next();
+    }), stop);
+  }, [queue, ready, directUrl, originalUrl]);
+
+  return (
+    <button className="image-thumb-button" onClick={onClick} aria-label={label} aria-busy={!loaded && !failed} title={failed ? '图片加载失败，点击预览' : undefined}>
+      <img ref={imageRef} alt={name} decoding="async" width="38" height="42" style={{ opacity: loaded ? 1 : 0 }} />
+    </button>
+  );
+}

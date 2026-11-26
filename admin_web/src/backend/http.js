@@ -108,9 +108,10 @@ export async function listOrders(filters = {}, options = {}) {
   return readData(response);
 }
 
-export async function getOrderPreviews(orderIds = []) {
+export async function getOrderPreviews(orderIds = [], options = {}) {
   return readData(await request('/api/v1/admin/order-previews', {
     method: 'POST',
+    signal: options.signal,
     body: JSON.stringify({ orderIds })
   }));
 }

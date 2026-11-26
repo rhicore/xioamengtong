@@ -19,6 +19,12 @@ const { createDemoApp } = require('./local-demo.cjs');
   try {
     browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
     const page = await browser.newPage();
+    // 故意让预览请求不能取消：验证即使网络层没有中止旧响应，请求序号仍能防止覆盖。
+    await page.addInitScript(() => {
+      const fetch = window.fetch;
+      window.fetch = (input, options) => fetch(input, String(input).endsWith('/api/v1/admin/order-previews')
+        ? { ...options, signal: undefined } : options);
+    });
     let previewHeld;
     const held = new Promise(resolve => { previewHeld = resolve; });
     const release = new Promise(resolve => { releasePreview = resolve; });

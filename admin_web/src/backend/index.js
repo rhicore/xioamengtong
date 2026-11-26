@@ -20,9 +20,9 @@ export async function listOrders(filters = {}, options = {}) {
   return adapter.listOrders(filters, options);
 }
 
-export async function getOrderPreviews(orderIds = []) {
+export async function getOrderPreviews(orderIds = [], options = {}) {
   const adapter = await backend;
-  return adapter.getOrderPreviews(orderIds);
+  return adapter.getOrderPreviews(orderIds, options);
 }
 
 export async function batchDownload(orderIds = []) {

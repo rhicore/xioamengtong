@@ -51,6 +51,8 @@
 
 关键问题：旧的单组预览响应延迟返回时，曾覆盖刷新后的多组列表，使第二组消失。`admin_web/src/App.jsx` 的 `ordersRequestRef` 为列表与预览绑定请求序号，过期响应不得更新当前列表、提示或加载状态。保留该机制，回归见 `tests/run-admin-refresh-tests.cjs`。
 
+2026-11-26 管理端多图性能优化已在本地实现、尚未提交上线：列表使用独立 `OrderThumbnail.jsx` 队列，按页面从上到下启动，最多 3 张并发，只加载可见区域及上下 160px；CloudBase 链接请求 80px 缩略处理，失败逐级回到原图链接/受保护接口。弹窗与下载仍为原图，不修改顾客文件。预览链接每批 4 单顺序获取，过期请求取消并保留请求序号校验；`OrderRows` 避免无关输入与图片更新重绘全表。实现、测量及上线验证边界见 [admin-performance.md](admin-performance.md)，回归为 `tests/run-admin-performance-tests.cjs`。后续发布时同步更新本段及该文档的发布状态。
+
 ## 6. 预览、裁切与导出
 
 - 顾客上传区的缩略图、空图片位使用圆角，与网页风格统一。进入全屏裁切后，裁切框使用直角。
@@ -79,6 +81,7 @@ node tests/run-customer-web-tests.js
 node tests/run-crop-geometry-tests.mjs
 # 已有 Playwright 模块可通过 PLAYWRIGHT_MODULE 指定，浏览器默认使用本机 Edge
 node tests/run-admin-refresh-tests.cjs
+node tests/run-admin-performance-tests.cjs
 node tests/run-browser-flow-tests.cjs
 ```
 
@@ -118,3 +121,4 @@ CLI 的容器发布即使带 `--force` 也曾询问是否灰度；非交互命�
 ## 10. 维护记录
 
 - 2026-11-26：将本次分隔线对比度调整及此前已确认的多组表格、裁切、平台识别、异步刷新修复和发布经验归入本文件；增加根目录 AI 阅读入口。后续任务按入口规则持续更新，具体发布版本以 Git 和实际线上产物核验为准。
+- 2026-11-26：新增管理端多图按序与按需加载、本地性能回归和测量文档。保留既有分组表格与下载流程，未自动提交或发布本次优化。
