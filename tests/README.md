@@ -84,3 +84,11 @@ node tests/run-admin-performance-tests.cjs
 脚本使用独立本地 HTTP 夹具与真实管理端构建，不连接线上数据库。每页 20 单、每单 10 组、共 400 张 1704×2400 测试图片；CPU 降速 4 倍，图片响应延迟 120ms，首图延迟 800ms。验证按页面从上到下启动、最多 3 张并发、屏外延迟加载、缩略处理失败及云链接失效回退、原图预览、整单勾选、连续滚动和取消旧预览请求，输出输入响应时间与长任务。可用 `ADMIN_PERF_WIDTH` 设置窗口宽度、`ADMIN_PERF_SCREENSHOT` 输出截图。`ADMIN_PERF_BASELINE=1` 仅用于改动前构建采样，不执行优化后的行为断言。
 
 这些结果用于本地回归，不能代替正式环境的登录、云存储权限及实际网络验证；实现与测量记录见 [管理端图片加载优化](../docs/admin-performance.md)。
+
+## 正式管理端浏览器性能测量
+
+经用户授权上线和测试后，使用已有测试员工账号，通过环境变量提供 `LOAD_TEST_ADMIN_USER` / `LOAD_TEST_ADMIN_PASSWORD`，执行 `node tests/run-production-admin-performance.cjs`。沿用上述 `PLAYWRIGHT_MODULE`。不将凭据写进脚本、文档或 Git；临时账号需要在测量后清理所属会话和账号。测量只查询、滚动和预览，不修改订单或图片，结束时退出测试会话。
+
+默认测量冷打开、重复查询和禁用缓存后的 1.6Mbps 下载 / 80ms 延迟 / 4 倍 CPU 降速；再检查屏外按需加载、返回不重载、逐段滚完整页及原图尺寸。`ADMIN_PERF_BASE_URL` 可指定目标站点；`ADMIN_PERF_MODES=cold` 可只复测冷打开及滚动，场景列表第一项必须是 `cold`。
+
+查询测量等待旧表格节点断开后才读取新表格；每轮间等待网络空闲。汇总输出不包含订单号、图片 URL 或 Cookie。测量结果按当时数据与网络解释，不能将浏览器缓存命中或前一轮回调当成限速场景的加速效果。
