@@ -55,6 +55,8 @@
 
 ## 6. 预览、裁切与导出
 
+- 2026-11-26 管理端预览闪动修复已在本地实现并验证，尚未提交或上线：点击时按当前缩略图的真实宽高比（未就绪时用 1704:2400）预先确定视口内的固定预览框；原图绝不能先按自然尺寸撑开窗口，再在 `onLoad` 中缩小。图片绝对定位于固定画布内，`object-fit: contain` 完整显示，加载完成再显示，不随加载改尺寸；每次打开使用独立序号，旧响应不能修改新弹窗状态。保留原图、标题、关闭与背景关闭操作。`tests/run-admin-preview-tests.cjs` 用分段图片响应逐帧验证四种窗口、横/竖图、缓存重开和关闭后换组，边界不变且不溢出视口。后续发布时更新本条状态。
+
 - 顾客上传区的缩略图、空图片位使用圆角，与网页风格统一。进入全屏裁切后，裁切框使用直角。
 - 裁切是黑色全屏画面，支持单指移动、双指缩放与旋转、90° 旋转、重置及替换图片。
 - 裁切比例固定 `1704:2400`，JPEG 导出固定 **1704 × 2400**；不添加白边。长图、宽图默认居中铺满，拖动、缩放和旋转均不能让裁切框越出原图。
@@ -82,6 +84,7 @@ node tests/run-crop-geometry-tests.mjs
 # 已有 Playwright 模块可通过 PLAYWRIGHT_MODULE 指定，浏览器默认使用本机 Edge
 node tests/run-admin-refresh-tests.cjs
 node tests/run-admin-performance-tests.cjs
+node tests/run-admin-preview-tests.cjs
 node tests/run-browser-flow-tests.cjs
 ```
 

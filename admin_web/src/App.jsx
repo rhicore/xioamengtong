@@ -71,7 +71,7 @@ const OrderRows = memo(function OrderRows({ order, selected, onToggle, onPreview
                   return url && (
                     <OrderThumbnail key={side} directUrl={group[side + '_url'] || ''} originalUrl={url}
                       name={name} label={`${order.order_id} ${label}${name}`}
-                      onClick={() => onPreview(order, side, { ...group, [side + '_download_url']: url }, label)} />
+                      onClick={(event) => onPreview(order, side, { ...group, [side + '_download_url']: url }, label, event.currentTarget.querySelector('img'))} />
                   );
                 })}
                 {!group.front_file_id && !group.back_file_id && !orderImageUrl(group, 'front') && !orderImageUrl(group, 'back') &&
@@ -122,7 +122,7 @@ export default function App() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
   const [imagePreview, setImagePreview] = useState(null);
-  const [imagePreviewSize, setImagePreviewSize] = useState(null);
+  const previewRequestRef = useRef(0);
   const [accountForm, setAccountForm] = useState({
     username: '',
     password: '',
@@ -248,26 +248,21 @@ export default function App() {
     setMessage('');
   }
 
-  const openImagePreview = useCallback((order, side, group = order, groupLabel = '') => {
+  const openImagePreview = useCallback((order, side, group = order, groupLabel = '', thumbnail) => {
     const url = orderImageUrl(group, side);
     if (!url) return;
-    setImagePreviewSize(null);
+    const ratio = thumbnail?.naturalWidth && thumbnail?.naturalHeight
+      ? thumbnail.naturalWidth / thumbnail.naturalHeight : 1704 / 2400;
+    const height = Math.min(Math.max(1, window.innerHeight - 150), Math.max(1, window.innerWidth - 64) / ratio);
     setImagePreview({
+      id: ++previewRequestRef.current,
       url,
-      title: `${order.order_id} · ${groupLabel}${side === 'front' ? '前图' : '后图'}`
+      title: `${order.order_id} · ${groupLabel}${side === 'front' ? '前图' : '后图'}`,
+      width: Math.round(height * ratio),
+      height: Math.round(height),
+      status: 'loading'
     });
   }, []);
-
-  function handlePreviewImageLoad(event) {
-    const image = event.currentTarget;
-    const maxWidth = Math.max(240, window.innerWidth - 64);
-    const maxHeight = Math.max(240, window.innerHeight - 150);
-    const scale = Math.min(1, maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
-    setImagePreviewSize({
-      width: Math.round(image.naturalWidth * scale),
-      height: Math.round(image.naturalHeight * scale)
-    });
-  }
 
   async function handleBatchDownload() {
     if (selectedIds.length === 0) {
@@ -822,21 +817,26 @@ export default function App() {
             role="dialog"
             aria-modal="true"
             aria-label="订单图片预览"
-            style={imagePreviewSize ? { width: `${imagePreviewSize.width + 32}px` } : undefined}
+            style={{ width: `${imagePreview.width + 32}px` }}
           >
             <div className="image-modal-heading">
               <strong>{imagePreview.title}</strong>
               <button className="text-button" onClick={() => setImagePreview(null)}>关闭</button>
             </div>
-            <img
-              src={imagePreview.url}
-              alt={imagePreview.title}
-              onLoad={handlePreviewImageLoad}
-              style={imagePreviewSize ? {
-                width: `${imagePreviewSize.width}px`,
-                height: `${imagePreviewSize.height}px`
-              } : undefined}
-            />
+            <div className="image-modal-stage" style={{ height: `${imagePreview.height}px` }}>
+              {imagePreview.status !== 'ready' && <span className="image-modal-loading" role="status">
+                {imagePreview.status === 'error' ? '图片加载失败' : '图片加载中…'}
+              </span>}
+              <img
+                key={imagePreview.id}
+                src={imagePreview.url}
+                alt={imagePreview.title}
+                decoding="async"
+                onLoad={() => setImagePreview(current => current?.id === imagePreview.id ? { ...current, status: 'ready' } : current)}
+                onError={() => setImagePreview(current => current?.id === imagePreview.id ? { ...current, status: 'error' } : current)}
+                style={{ opacity: imagePreview.status === 'ready' ? 1 : 0 }}
+              />
+            </div>
           </section>
         </div>
       )}
