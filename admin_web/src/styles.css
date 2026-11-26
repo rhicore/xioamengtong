@@ -82,6 +82,8 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 16px; border-bottom: 1px solid #f3f4f6; text-align: left; font-size: 13px; line-height: 1.35; }
 th { padding-top: 9px; padding-bottom: 9px; background: #f9fafb; color: #6b7280; font-size: 11px; }
 .table-card tbody tr { height: 54px; }
+.table-card th, .table-card td { border-bottom-color: #e1e5eb; }
+.table-card tbody:not(:last-of-type) td[rowspan], .table-card tbody:not(:last-of-type) tr:last-child td { border-bottom: 2px solid #c8ced8; }
 .table-card tbody:last-of-type td[rowspan], .table-card tbody:last-of-type tr:last-child td { border-bottom: 0; }
 .table-card td[rowspan] { vertical-align: middle; }
 .order-quantity-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
