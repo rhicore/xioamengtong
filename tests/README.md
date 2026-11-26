@@ -93,4 +93,6 @@ node tests/run-admin-performance-tests.cjs
 
 查询测量等待旧表格节点断开后才读取新表格；每轮间等待网络空闲。汇总输出不包含订单号、图片 URL 或 Cookie。测量结果按当时数据与网络解释，不能将浏览器缓存命中或前一轮回调当成限速场景的加速效果。
 
+发布前可设置 `ADMIN_PERF_STATIC_DIST` 为本地生产包绝对路径，将候选包接入同一正式 API；输出会明确标记 `local-build-live-api`，这种结果不能视作正式静态页面已上线的验证。发布后删除此变量，输出来源应为 `production`。
+
 `compare-admin-first-image.cjs` 导出 `compareFirstImage([{ name, dist }])`，复用上述环境凭据，比较指定绝对路径的生产包。仅替换浏览器加载的静态包，真实登录、订单和图片走正式 API；每轮新会话禁用缓存并交替测试顺序，默认 3 轮，可通过 `ADMIN_COMPARE_ROUNDS` 修改。用于隔离前端版本差异，记录会话、订单、预览链接和首图等待链路；结果不能冒充已上线静态页面测量。

@@ -1,5 +1,7 @@
 // 正式站只读浏览器测量。凭据仅从环境变量读取；不记录订单号、图片 URL 或 Cookie。
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 async function measureProductionAdmin() {
@@ -14,6 +16,13 @@ async function measureProductionAdmin() {
     const login = await context.request.post(base + '/api/v1/admin/login', { data: { username, password } });
     assert.equal(login.status(), 200, 'production staff login failed');
     const page = await context.newPage();
+    const staticDist = process.env.ADMIN_PERF_STATIC_DIST ? path.resolve(process.env.ADMIN_PERF_STATIC_DIST) : null;
+    if (staticDist) await page.route(base + '/admin/**', route => {
+      const pathname = new URL(route.request().url()).pathname;
+      const file = path.join(staticDist, pathname === '/admin/' ? 'index.html' : pathname.slice('/admin/'.length));
+      if (!file.startsWith(staticDist + path.sep) || !fs.existsSync(file)) return route.abort();
+      return route.fulfill({ path: file, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
     page.setDefaultTimeout(60000);
     await page.addInitScript(() => {
       window.adminPerf = { starts: [], loads: [], longTasks: [] };
@@ -92,7 +101,7 @@ async function measureProductionAdmin() {
       await page.getByPlaceholder('搜索订单号').fill('只读响应测试');
       const inputMs = Math.round(performance.now() - inputStart);
       await page.getByPlaceholder('搜索订单号').fill('');
-      const result = { mode, listMs, firstImageMs, visibleImagesMs, inputMs,
+      const result = { source: staticDist ? 'local-build-live-api' : 'production', mode, listMs, firstImageMs, visibleImagesMs, inputMs,
         orders: snapshot.orders, groups: snapshot.groups, imageSlots: snapshot.imageSlots,
         requestedImages: snapshot.starts.length, processedStarts: snapshot.starts.filter(s => s.processed).length,
         loadedImages: snapshot.loads.length, failedImages: snapshot.failedImages, peak,

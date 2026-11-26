@@ -219,12 +219,10 @@ export default function App() {
       const previews = await getOrderPreviews(orderIds, { signal });
       // 图片预览只能更新发起它的那次查询，避免旧响应删掉刚新增的组。
       setOrders((current) => requestId !== ordersRequestRef.current ? current : current.map((order) => (
-        previews[order.order_id]
-          ? { ...order, ...previews[order.order_id] }
-          : order
+        previews[order.order_id] ? { ...order, ...previews[order.order_id] } : order
       )));
     } catch {
-      // 图片已能从列表中的原有地址加载，不等待或依赖这个后台请求。
+      // 后台小图地址不可用不影响已直接开始加载的图片。
     }
   }
 

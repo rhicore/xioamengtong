@@ -100,11 +100,12 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     await page.addInitScript(() => {
-      window.perfSample = { longTasks: [], maxTickGap: 0, imageStarts: [] };
+      window.perfSample = { longTasks: [], maxTickGap: 0, imageStarts: [], visibleReloads: 0 };
       const source = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
       Object.defineProperty(HTMLImageElement.prototype, 'src', {
         ...source,
         set(value) {
+          if (this.closest('.image-thumb-button') && this.style.opacity === '1' && this.src !== value) window.perfSample.visibleReloads++;
           const match = /\/(\d+)\.jpg/.exec(value);
           if (match) window.perfSample.imageStarts.push(Number(match[1]));
           source.set.call(this, value);
@@ -118,14 +119,14 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.locator('tbody[data-order-id]').first().waitFor();
     if (firstPreviewHeld) {
       await firstPreviewHeld;
-      // 预览接口故意不返回：首屏必须直接显示，不能只放行三张或抢加载整页。
+      // 预览接口故意不返回：整个可见区仍直接显示，屏外继续等待。
       await page.waitForFunction(() => [...document.querySelectorAll('.image-thumb-button img')].every(image => {
         const rect = image.getBoundingClientRect();
         return rect.bottom < 0 || rect.top > innerHeight || (image.naturalWidth > 0 && image.style.opacity === '1');
       }));
-      assert.ok(requests.length > 3 && requests.length < 50, 'visible images were held back or offscreen originals loaded eagerly');
+      assert.ok(requests.length > 3 && requests.length < 50);
       releaseFirstPreview();
-      console.log('PASS: visible images display while preview links are blocked, without a three-image gate or eager offscreen downloads.');
+      console.log('PASS: visible images display while preview links are blocked; offscreen files stay deferred.');
     }
     await sleep(1800);
     const initialRequests = requests.length;
@@ -135,7 +136,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const interactionMs = Math.round(performance.now() - started);
     console.log(JSON.stringify({ mode: baseline ? 'baseline' : 'optimized', images: 400, initialRequests, peak, interactionMs, originalBytes: original.length, thumbnailBytes: thumbnail.length, longTasks: sample.longTasks, maxTickGap: sample.maxTickGap }));
     if (baseline) return;
-    assert.equal(requests.filter(r => r.id < 3).length, 3, 'preview links restarted fast-start images');
+    assert.equal(sample.visibleReloads, 0, 'preview links restarted an already visible image');
     assert.ok(initialRequests < 50, `offscreen thumbnails were eagerly loaded: ${initialRequests}`);
     // 浏览器网络层可交换同批请求的抵达顺序；检查真实 img.src 的启动顺序。
     const firstStarts = [...new Set(sample.imageStarts)];

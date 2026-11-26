@@ -81,6 +81,8 @@ export default function OrderThumbnail({ directUrl, originalUrl, name, label, on
   const queue = useContext(ThumbnailQueue);
   const imageRef = useRef(null);
   const sourcesRef = useRef([]);
+  const currentSourceRef = useRef('');
+  const cancelAlternativeRef = useRef(null);
   sourcesRef.current = thumbnailSources(directUrl, originalUrl);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -93,6 +95,7 @@ export default function OrderThumbnail({ directUrl, originalUrl, name, label, on
     setLoaded(false);
     const stop = () => {
       cancelled = true;
+      cancelAlternativeRef.current?.();
       clearTimeout(timeout);
       image.onload = image.onerror = null;
       image.removeAttribute('src');
@@ -100,23 +103,26 @@ export default function OrderThumbnail({ directUrl, originalUrl, name, label, on
     };
     return queue.add(image, () => new Promise(resolve => {
       // 排队时链接可在后台补齐；真正启动时取最新来源，已开始的图片不取消重载。
-      const sources = sourcesRef.current;
       finish = resolve;
-      let index = 0;
+      const attempted = new Set();
       const next = () => {
         clearTimeout(timeout);
         if (cancelled) return resolve();
-        if (index >= sources.length) {
+        const source = sourcesRef.current.find(url => !attempted.has(url));
+        if (!source) {
           image.onload = image.onerror = null;
           setFailed(true);
           return resolve();
         }
-        image.src = sources[index++];
+        attempted.add(source);
+        currentSourceRef.current = source;
+        image.src = source;
         timeout = window.setTimeout(next, 20000);
       };
       image.onload = () => {
         clearTimeout(timeout);
         if (cancelled) return resolve();
+        cancelAlternativeRef.current?.();
         setLoaded(true);
         image.onload = image.onerror = null;
         resolve();
@@ -125,6 +131,30 @@ export default function OrderThumbnail({ directUrl, originalUrl, name, label, on
       next();
     }), stop);
   }, [queue, originalUrl]);
+
+  useEffect(() => {
+    const thumbnail = thumbnailSources(directUrl, originalUrl)[0];
+    if (loaded || !thumbnail?.includes('imageMogr2/thumbnail/') || currentSourceRef.current !== originalUrl) return;
+    // 原图立即加载；后台小图若先完成就显示小图，绝不取消原图去等待尚未完成的处理。
+    const alternative = new Image();
+    alternative.decoding = 'async';
+    const cancel = () => {
+      alternative.onload = alternative.onerror = null;
+      alternative.removeAttribute('src');
+    };
+    cancelAlternativeRef.current = cancel;
+    alternative.onload = () => {
+      currentSourceRef.current = thumbnail;
+      if (!imageRef.current.onload) imageRef.current.onload = () => {
+        setFailed(false);
+        setLoaded(true);
+        cancel();
+      };
+      imageRef.current.src = thumbnail;
+    };
+    alternative.src = thumbnail;
+    return cancel;
+  }, [directUrl, originalUrl, loaded]);
 
   return (
     <button className="image-thumb-button" onClick={onClick} aria-label={label} aria-busy={!loaded && !failed} title={failed ? '图片加载失败，点击预览' : undefined}>
