@@ -13,6 +13,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const requests = [];
   let active = 0, peak = 0, previewCalls = 0, heldPreview;
   let previewAbortCount = 0;
+  let releaseFirstPreview;
+  const firstPreviewHeld = process.env.ADMIN_PERF_BLOCK_PREVIEWS === '1' ? new Promise(started => {
+    heldPreview = { started, release: new Promise(resolve => { releaseFirstPreview = resolve; }) };
+  }) : null;
   const orders = Array.from({ length: 20 }, (_, o) => ({
     order_id: `PERF-${o}`, notebook_type: 'jiaotao', display_name: '胶套本', status: 'submitted',
     groups: Array.from({ length: 10 }, (_, g) => ({
@@ -30,7 +34,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     try {
       await sleep(id === 0 ? 800 : 120);
       // 两种失败：缩略处理不支持；云链接失效后回到有权限的原图接口。
-      const failed = (id === 2 && variant === 'thumb') || (id === 3 && variant !== 'proxy');
+      const failed = (id === 380 && variant === 'thumb') || (id === 381 && variant !== 'proxy');
       respond(failed ? 404 : 200, failed ? Buffer.from('image unavailable') : variant === 'thumb' ? thumbnail : original);
     } finally { active--; }
   };
@@ -112,6 +116,17 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/admin/`);
     await page.locator('tbody[data-order-id]').first().waitFor();
+    if (firstPreviewHeld) {
+      await firstPreviewHeld;
+      // 预览接口故意不返回：首屏必须直接显示，不能只放行三张或抢加载整页。
+      await page.waitForFunction(() => [...document.querySelectorAll('.image-thumb-button img')].every(image => {
+        const rect = image.getBoundingClientRect();
+        return rect.bottom < 0 || rect.top > innerHeight || (image.naturalWidth > 0 && image.style.opacity === '1');
+      }));
+      assert.ok(requests.length > 3 && requests.length < 50, 'visible images were held back or offscreen originals loaded eagerly');
+      releaseFirstPreview();
+      console.log('PASS: visible images display while preview links are blocked, without a three-image gate or eager offscreen downloads.');
+    }
     await sleep(1800);
     const initialRequests = requests.length;
     const sample = await page.evaluate(() => window.perfSample);
@@ -120,13 +135,11 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const interactionMs = Math.round(performance.now() - started);
     console.log(JSON.stringify({ mode: baseline ? 'baseline' : 'optimized', images: 400, initialRequests, peak, interactionMs, originalBytes: original.length, thumbnailBytes: thumbnail.length, longTasks: sample.longTasks, maxTickGap: sample.maxTickGap }));
     if (baseline) return;
-    assert.ok(peak <= 3, `thumbnail concurrency was ${peak}`);
+    assert.equal(requests.filter(r => r.id < 3).length, 3, 'preview links restarted fast-start images');
     assert.ok(initialRequests < 50, `offscreen thumbnails were eagerly loaded: ${initialRequests}`);
     // 浏览器网络层可交换同批请求的抵达顺序；检查真实 img.src 的启动顺序。
     const firstStarts = [...new Set(sample.imageStarts)];
     assert.deepEqual(firstStarts, [...firstStarts].sort((a, b) => a - b), 'initial thumbnails did not start top to bottom');
-    assert.ok(requests.some(r => r.id === 2 && r.variant === 'direct'), 'thumbnail failure did not use original: ' + JSON.stringify(requests));
-    assert.ok(requests.some(r => r.id === 3 && r.variant === 'proxy'), 'expired cloud link did not use authenticated original');
     assert.ok(interactionMs < 500, `input stalled for ${interactionMs}ms`);
     assert.ok(Math.max(0, ...sample.longTasks) < 250, 'a front-end task blocked the page for 250ms');
     if (process.env.ADMIN_PERF_SCREENSHOT) await page.screenshot({ path: process.env.ADMIN_PERF_SCREENSHOT });
@@ -136,6 +149,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.getByRole('button', { name: '关闭', exact: true }).click();
     await page.locator('tbody').last().scrollIntoViewIfNeeded();
     await page.waitForFunction(() => [...document.querySelectorAll('tbody:last-of-type img')].some(img => img.naturalWidth > 0));
+    await page.waitForFunction(() => [...document.querySelectorAll('tbody:last-of-type img')].slice(0, 2).every(img => img.style.opacity === '1'));
+    assert.ok(requests.some(r => r.id === 380 && r.variant === 'direct'), 'thumbnail failure did not use original');
+    assert.ok(requests.some(r => r.id === 381 && r.variant === 'proxy'), 'expired cloud link did not use authenticated original');
     assert.ok(requests.some(r => r.id >= 380), 'bottom rows did not load on scroll');
     assert.ok(!requests.some(r => r.id > 60 && r.id < 360), 'skipped offscreen rows should remain unloaded');
     await page.getByRole('columnheader').first().locator('input').check();
@@ -169,8 +185,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     release();
     assert.ok(previewAbortCount > 0, 'superseded preview HTTP request was not aborted');
     assert.ok(previewCalls <= 16, 'obsolete query kept fetching preview batches');
-    console.log('PASS: top-to-bottom starts, bounded concurrency, viewport loading, fallbacks, original preview, responsive input, scrolling, order selection and request cancellation.');
+    console.log('PASS: immediate top-to-bottom starts, viewport loading, no duplicate upgrades, fallbacks, original preview, responsive input, scrolling, order selection and request cancellation.');
   } finally {
+    releaseFirstPreview?.();
     await browser?.close();
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

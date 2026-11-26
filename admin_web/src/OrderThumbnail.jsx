@@ -4,7 +4,6 @@ const ThumbnailQueue = createContext(null);
 
 function createThumbnailQueue() {
   const jobs = new Map();
-  let active = 0;
   let timer;
   let destroyed = false;
   const schedule = () => {
@@ -24,11 +23,8 @@ function createThumbnailQueue() {
     // Observer 回调顺序不保证等于页面顺序；按 DOM 排序，不逐张测量布局。
     pending.sort((a, b) => a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
     for (const job of pending) {
-      if (active >= 3) break;
       job.started = true;
-      active++;
       job.start().finally(() => {
-        active--;
         if (jobs.get(job.element) === job) {
           jobs.delete(job.element);
           observer.unobserve(job.element);
@@ -81,16 +77,17 @@ export function thumbnailSources(directUrl, originalUrl) {
   return [...new Set([thumbnail, directUrl, originalUrl].filter(Boolean))];
 }
 
-export default function OrderThumbnail({ directUrl, originalUrl, ready, name, label, onClick }) {
+export default function OrderThumbnail({ directUrl, originalUrl, name, label, onClick }) {
   const queue = useContext(ThumbnailQueue);
   const imageRef = useRef(null);
+  const sourcesRef = useRef([]);
+  sourcesRef.current = thumbnailSources(directUrl, originalUrl);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    if (!queue || !ready) return;
+    if (!queue) return;
     const image = imageRef.current;
-    const sources = thumbnailSources(directUrl, originalUrl);
-    if (!sources.length) return;
+    if (!sourcesRef.current.length) return;
     let finish, timeout, cancelled = false;
     setFailed(false);
     setLoaded(false);
@@ -102,6 +99,8 @@ export default function OrderThumbnail({ directUrl, originalUrl, ready, name, la
       finish?.();
     };
     return queue.add(image, () => new Promise(resolve => {
+      // 排队时链接可在后台补齐；真正启动时取最新来源，已开始的图片不取消重载。
+      const sources = sourcesRef.current;
       finish = resolve;
       let index = 0;
       const next = () => {
@@ -115,9 +114,8 @@ export default function OrderThumbnail({ directUrl, originalUrl, ready, name, la
         image.src = sources[index++];
         timeout = window.setTimeout(next, 20000);
       };
-      image.onload = async () => {
+      image.onload = () => {
         clearTimeout(timeout);
-        try { await image.decode(); } catch { /* 已完成加载的旧格式仍交由浏览器显示。 */ }
         if (cancelled) return resolve();
         setLoaded(true);
         image.onload = image.onerror = null;
@@ -126,7 +124,7 @@ export default function OrderThumbnail({ directUrl, originalUrl, ready, name, la
       image.onerror = next;
       next();
     }), stop);
-  }, [queue, ready, directUrl, originalUrl]);
+  }, [queue, originalUrl]);
 
   return (
     <button className="image-thumb-button" onClick={onClick} aria-label={label} aria-busy={!loaded && !failed} title={failed ? '图片加载失败，点击预览' : undefined}>
